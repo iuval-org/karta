@@ -58,11 +58,13 @@ export function loadPicker(
     .then(() => {
       const pk = window.google.picker;
       const developerKey = import.meta.env.VITE_GOOGLE_API_KEY;
-      const appId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+      const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+      // setAppId requires the numeric project number (extracted from Client ID)
+      const appId = clientId ? clientId.split('-')[0] : '';
 
-      if (!developerKey || !appId) {
+      if (!developerKey || !clientId) {
         onError(
-          'Falta configuraci\u00f3n: VITE_GOOGLE_API_KEY y VITE_GOOGLE_CLIENT_ID son requeridos',
+          'Falta configuración: VITE_GOOGLE_API_KEY y VITE_GOOGLE_CLIENT_ID son requeridos',
         );
         return;
       }

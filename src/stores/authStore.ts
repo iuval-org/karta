@@ -8,6 +8,20 @@ import {
 import type { User } from 'firebase/auth';
 import { auth, googleProvider } from '../services/firebase';
 
+const OAUTH_TOKEN_KEY = 'karta_oauth_token';
+
+function loadOAuthToken(): string | null {
+  return sessionStorage.getItem(OAUTH_TOKEN_KEY);
+}
+
+function saveOAuthToken(token: string | null) {
+  if (token) {
+    sessionStorage.setItem(OAUTH_TOKEN_KEY, token);
+  } else {
+    sessionStorage.removeItem(OAUTH_TOKEN_KEY);
+  }
+}
+
 interface AuthState {
   user: User | null;
   isLoading: boolean;
@@ -27,17 +41,19 @@ export const useAuthStore = create<AuthState>((set, get) => {
     user: null,
     isLoading: true,
     error: null,
-    oAuthAccessToken: null,
+    oAuthAccessToken: loadOAuthToken(),
 
     loginWithGoogle: async () => {
       set({ error: null });
       try {
         const result = await signInWithPopup(auth, googleProvider);
         const credential = GoogleAuthProvider.credentialFromResult(result);
+        const token = credential?.accessToken ?? null;
+        saveOAuthToken(token);
         set({
           user: result.user,
           error: null,
-          oAuthAccessToken: credential?.accessToken ?? null,
+          oAuthAccessToken: token,
         });
       } catch (err) {
         const message =
@@ -49,6 +65,7 @@ export const useAuthStore = create<AuthState>((set, get) => {
     logout: async () => {
       try {
         await signOut(auth);
+        saveOAuthToken(null);
         set({ user: null, error: null, oAuthAccessToken: null });
       } catch (err) {
         const message =
@@ -58,14 +75,34 @@ export const useAuthStore = create<AuthState>((set, get) => {
     },
 
     getAccessToken: async () => {
-      const { user, oAuthAccessToken } = get();
+      const { oAuthAccessToken } = get();
+      // Return cached OAuth token (from memory or sessionStorage)
       if (oAuthAccessToken) return oAuthAccessToken;
-      if (!user) return null;
-      try {
-        return await user.getIdToken();
-      } catch {
-        return null;
+
+      // Try sessionStorage (survives refresh)
+      const stored = loadOAuthToken();
+      if (stored) {
+        set({ oAuthAccessToken: stored });
+        return stored;
       }
+
+      // If we have a user but no OAuth token, re-authenticate silently
+      const { user } = get();
+      if (user) {
+        try {
+          // Force re-authentication to get fresh OAuth token
+          const result = await signInWithPopup(auth, googleProvider);
+          const credential = GoogleAuthProvider.credentialFromResult(result);
+          const token = credential?.accessToken ?? null;
+          saveOAuthToken(token);
+          set({ oAuthAccessToken: token });
+          return token;
+        } catch {
+          return null;
+        }
+      }
+
+      return null;
     },
   };
 });

@@ -1,26 +1,76 @@
-import { useEffect } from 'react';
+import { useEffect, useCallback, useState } from 'react';
+import { ReactFlowProvider } from '@xyflow/react';
 import { useAuthStore } from './stores/authStore';
 import { useRootStore } from './stores/rootStore';
-import UserMenu from './components/UserMenu';
+import { useCanvasStore } from './stores/canvasStore';
+import { useTabStore } from './stores/tabStore';
+import { useSidebarStore } from './stores/sidebarStore';
+import { usePreferencesStore } from './stores/preferencesStore';
+import { initConnectivityListeners } from './stores/connectivityStore';
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import AuthLayout from './layouts/AuthLayout';
+import AppLayout from './layouts/AppLayout';
 import RootPicker from './components/RootPicker';
+import Canvas from './components/Canvas';
+import TabBar from './components/TabBar';
+import Sidebar from './components/Sidebar';
+import Toolbar from './components/Toolbar';
+import StatusBar from './components/StatusBar';
+import ToastContainer from './components/Toast';
+import OfflineBanner from './components/OfflineBanner';
+import ShortcutHelp from './components/ShortcutHelp';
+import SettingsModal from './components/SettingsModal';
 
-function App() {
+function AppContent() {
   const { user, isLoading: authLoading } = useAuthStore();
-  const {
-    rootFolderId,
-    rootFolderName,
-    isLoading: rootLoading,
-    hydrate,
-    setRoot,
-    changeRoot,
-  } = useRootStore();
+  const { rootFolderId, rootFolderName, isLoading: rootLoading, hydrate, changeRoot } =
+    useRootStore();
+  const loadItems = useCanvasStore((s) => s.loadItems);
+  const initialized = useCanvasStore((s) => s.nodes.length > 0);
+  const resetLayout = useCanvasStore((s) => s.resetLayout);
+  const loadTabs = useTabStore((s) => s.loadTabs);
+  const tabsHydrated = useTabStore((s) => s.hydrated);
+  const hydrateSidebar = useSidebarStore((s) => s.hydrate);
+  const loadPreferences = usePreferencesStore((s) => s.load);
+
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Global keyboard shortcuts
+  useKeyboardShortcuts();
+
+  // Initialize connectivity listeners on mount
+  useEffect(() => {
+    const cleanup = initConnectivityListeners();
+    return cleanup;
+  }, []);
 
   useEffect(() => {
     if (user) {
       hydrate();
+      loadTabs();
+      hydrateSidebar();
+      loadPreferences();
     }
-  }, [user, hydrate]);
+  }, [user, hydrate, loadTabs, hydrateSidebar, loadPreferences]);
+
+  useEffect(() => {
+    if (rootFolderId && !initialized && tabsHydrated) {
+      loadItems(rootFolderId);
+    }
+  }, [rootFolderId, initialized, loadItems, tabsHydrated]);
+
+  const handleNewTab = useCallback(() => {
+    const addTab = useTabStore.getState().addTab;
+    const tabs = useTabStore.getState().tabs;
+    if (tabs.length > 0) {
+      // Open Google Picker — re-use root folder for simplicity
+      addTab(rootFolderId ?? 'root', rootFolderName || 'Nueva pestaña');
+    }
+  }, [rootFolderId, rootFolderName]);
+
+  const handleReorganize = useCallback(() => {
+    resetLayout();
+  }, [resetLayout]);
 
   if (authLoading || (user && rootLoading)) {
     return (
@@ -35,34 +85,52 @@ function App() {
   }
 
   if (!rootFolderId) {
-    return <RootPicker onFolderSelected={setRoot} />;
+    return <RootPicker onFolderSelected={(id, name) => useRootStore.getState().setRoot(id, name)} />;
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="flex items-center justify-between px-4 py-2 bg-white border-b border-gray-200">
-        <div className="flex items-center gap-3">
-          <h1 className="text-lg font-semibold text-gray-900">Karta</h1>
-          <span className="text-gray-300">/</span>
-          <span className="text-sm text-gray-600 truncate max-w-[200px]">
-            {rootFolderName}
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={changeRoot}
-            className="text-xs text-gray-400 hover:text-gray-600 transition-colors px-2 py-1 rounded hover:bg-gray-100 cursor-pointer motion-safe:transition-[color,background-color]"
-            title="Cambiar carpeta raiz"
-          >
-            Cambiar carpeta
-          </button>
-          <UserMenu />
-        </div>
-      </header>
-      <main className="flex items-center justify-center min-h-[calc(100vh-56px)]">
-        <h1 className="text-4xl font-bold text-gray-700">Karta</h1>
-      </main>
-    </div>
+    <>
+      <AppLayout
+        tabBar={<TabBar />}
+        sidebar={
+          <Sidebar
+            rootFolderName={rootFolderName}
+            onNewTab={handleNewTab}
+            onReorganize={handleReorganize}
+            onChangeRoot={changeRoot}
+            onOpenSettings={() => setSettingsOpen(true)}
+          />
+        }
+        toolbar={
+          <Toolbar
+            rootFolderName={rootFolderName}
+            onOpenSettings={() => setSettingsOpen(true)}
+          />
+        }
+        canvas={
+          <Canvas
+          />
+        }
+        statusBar={<StatusBar />}
+      />
+
+      {/* Global overlay components */}
+      <OfflineBanner />
+      <ToastContainer />
+      <ShortcutHelp />
+      <SettingsModal
+        isOpen={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+      />
+    </>
+  );
+}
+
+function App() {
+  return (
+    <ReactFlowProvider>
+      <AppContent />
+    </ReactFlowProvider>
   );
 }
 

@@ -1,0 +1,868 @@
+import {
+  memo,
+  useCallback,
+  useMemo,
+  useState,
+  useRef,
+  useEffect,
+  type MouseEvent as ReactMouseEvent,
+} from 'react';
+import {
+  Handle,
+  Position,
+  NodeResizer,
+  type NodeProps,
+  type ResizeParams,
+} from '@xyflow/react';
+import type { CanvasNodeData } from '../stores/canvasStore';
+import { useCanvasStore } from '../stores/canvasStore';
+import { useTabStore } from '../stores/tabStore';
+import EmptyState from '../components/EmptyState';
+import { validateFileName } from '../utils/validation';
+
+/* ------------------------------------------------------------------ */
+/*  Realistic macOS‑style folder SVGs                                  */
+/* ------------------------------------------------------------------ */
+
+const CLOSED_FOLDER_SVG = `<svg viewBox="0 0 40 32" width="100%" height="100%" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <path d="M2 6 L2 28 Q2 30 4 30 L36 30 Q38 30 38 28 L38 10 Q38 8 36 8 L18 8 L14 4 Q13 2 11 2 L4 2 Q2 2 2 4 Z" fill="#3B82F6"/>
+  <path d="M2 8 L2 28 Q2 30 4 30 L36 30 Q38 30 38 28 L38 10 Q38 10 36 10 Z" fill="#60A5FA" opacity="0.6"/>
+</svg>`;
+
+const OPEN_FOLDER_SVG = `<svg viewBox="0 0 40 32" width="24" height="19" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <path d="M2 8 L14 8 L18 4 Q19 2 21 2 L36 2 Q38 2 38 4 L38 8" fill="#3B82F6"/>
+  <path d="M2 10 L2 28 Q2 30 4 30 L36 30 Q38 30 38 28 L38 12 Q38 10 36 10 Z" fill="#DBEAFE" stroke="#93C5FD"/>
+</svg>`;
+
+const MENU_DOTS = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="16" height="16"><path d="M10 3a1.5 1.5 0 110 3 1.5 1.5 0 010-3zM10 8.5a1.5 1.5 0 110 3 1.5 1.5 0 010-3zM10 14a1.5 1.5 0 110 3 1.5 1.5 0 010-3z"/></svg>`;
+
+/* ------------------------------------------------------------------ */
+/*  Component                                                          */
+/* ------------------------------------------------------------------ */
+
+function FolderNode({ id, data, selected }: NodeProps) {
+  const item = (data as unknown as CanvasNodeData).driveItem;
+
+  /* ── store selectors ────────────────────────────────────────── */
+  const isOpen = useCanvasStore((s) => s.folderOpenState[id] ?? false);
+  const folderDimensions = useCanvasStore((s) => s.folderDimensions[id]);
+  const allItems = useCanvasStore((s) => s.allItems);
+  const toggleFolder = useCanvasStore((s) => s.toggleFolder);
+  const updateFolderDimensions = useCanvasStore((s) => s.updateFolderDimensions);
+  const updateFolderViewport = useCanvasStore((s) => s.updateFolderViewport);
+  const folderViewportState = useCanvasStore((s) => s.folderViewportState[id]);
+  const nodes = useCanvasStore((s) => s.nodes);
+  const onConnect = useCanvasStore((s) => s.onConnect);
+  const searchHighlightedNodeIds = useCanvasStore((s) => s.searchHighlightedNodeIds);
+  const removingNodeIds = useCanvasStore((s) => s.removingNodeIds);
+  const isSearchActive = searchHighlightedNodeIds.length > 0;
+  const isSearchMatch = searchHighlightedNodeIds.includes(id);
+  const isRemoving = removingNodeIds.includes(id);
+  const selectedNodeIds = useCanvasStore((s) => s.selectedNodeIds);
+  const clearSelection = useCanvasStore((s) => s.clearSelection);
+  const applyGridLayout = useCanvasStore((s) => s.applyGridLayout);
+  const isMultiSelected = selected && selectedNodeIds.length > 1;
+  const folderHoverTarget = useCanvasStore((s) => s.folderHoverTarget);
+  const isDragOver = folderHoverTarget === id && !isOpen;
+
+  /* ── Refs ───────────────────────────────────────────────────── */
+  const rootElRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const panState = useRef<{ x: number; y: number; startPanX: number; startPanY: number; isPanning: boolean }>({
+    x: 0, y: 0, startPanX: 0, startPanY: 0, isPanning: false,
+  });
+
+  /* ── Local viewport state ──────────────────────────────────── */
+  const [viewportPan, setViewportPan] = useState(() => ({ x: folderViewportState?.panX ?? 0, y: folderViewportState?.panY ?? 0 }));
+  const [viewportZoom, setViewportZoom] = useState(() => folderViewportState?.zoom ?? 1);
+
+  /* ── child count ────────────────────────────────────────────── */
+  const childCount = useMemo(
+    () => allItems.filter((i) => i.parentId === item.id).length,
+    [allItems, item.id],
+  );
+
+  /* ── Apply overflow:hidden to ReactFlow wrapper when open ──── */
+  useEffect(() => {
+    if (!isOpen || !rootElRef.current) return;
+
+    const wrapper = rootElRef.current.parentElement;
+    if (!wrapper) return;
+
+    wrapper.style.overflow = 'hidden';
+    wrapper.style.position = 'relative';
+
+    return () => {
+      wrapper.style.overflow = '';
+      wrapper.style.position = '';
+    };
+  }, [isOpen]);
+
+  /* ── Persist viewport state ─────────────────────────────────── */
+  const persistViewport = useCallback(
+    (panX: number, panY: number, zoom: number) => {
+      updateFolderViewport(id, { panX, panY, zoom });
+    },
+    [id, updateFolderViewport],
+  );
+
+  /* ── handlers ───────────────────────────────────────────────── */
+
+  const handleDoubleClick = useCallback(() => {
+    toggleFolder(id);
+  }, [id, toggleFolder]);
+
+  const handleClose = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      toggleFolder(id);
+    },
+    [id, toggleFolder],
+  );
+
+  const handleResize = useCallback(
+    (_: unknown, params: ResizeParams) => {
+      updateFolderDimensions(id, {
+        width: params.width,
+        height: params.height,
+      });
+    },
+    [id, updateFolderDimensions],
+  );
+
+  /* ── Internal viewport: pan ────────────────────────────────── */
+
+  const handleViewportMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      // Only pan on background (ignore drag on child nodes / interactive elements)
+      if (e.button !== 0) return;
+      const target = e.target as HTMLElement;
+      if (target.closest('.react-flow__node') || target.closest('button') || target.closest('[role="button"]')) return;
+
+      e.preventDefault();
+      panState.current = {
+        x: e.clientX,
+        y: e.clientY,
+        startPanX: viewportPan.x,
+        startPanY: viewportPan.y,
+        isPanning: true,
+      };
+
+      const onMove = (ev: globalThis.MouseEvent) => {
+        if (!panState.current.isPanning) return;
+        const dx = ev.clientX - panState.current.x;
+        const dy = ev.clientY - panState.current.y;
+        const newPanX = panState.current.startPanX + dx;
+        const newPanY = panState.current.startPanY + dy;
+        setViewportPan({ x: newPanX, y: newPanY });
+      };
+
+      const onUp = () => {
+        panState.current.isPanning = false;
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    },
+    [viewportPan],
+  );
+
+  /* ── Internal viewport: zoom (ctrl+scroll / cmd+scroll) ────── */
+
+  const handleViewportWheel = useCallback(
+    (e: React.WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      e.stopPropagation();
+
+      const delta = -e.deltaY * 0.001;
+      const newZoom = Math.max(0.25, Math.min(3, viewportZoom + delta));
+
+      // Zoom around cursor position within the viewport
+      const rect = viewportRef.current?.getBoundingClientRect();
+      if (!rect) return;
+
+      const cursorX = e.clientX - rect.left;
+      const cursorY = e.clientY - rect.top;
+      const scale = newZoom / viewportZoom;
+
+      const newPanX = cursorX - scale * (cursorX - viewportPan.x);
+      const newPanY = cursorY - scale * (cursorY - viewportPan.y);
+
+      setViewportPan({ x: newPanX, y: newPanY });
+      setViewportZoom(newZoom);
+
+      persistViewport(newPanX, newPanY, newZoom);
+    },
+    [viewportZoom, viewportPan, persistViewport],
+  );
+
+  /* ── Update child node positions on viewport change ────────── */
+  useEffect(() => {
+    if (!isOpen) return;
+    const { nodes: allNodes } = useCanvasStore.getState();
+    const childNodes = allNodes.filter((n) => n.parentId === id);
+    if (childNodes.length === 0) return;
+
+    // Compute offset from the saved positions (baseline)
+    // We don't move actual nodes; instead we let the CSS transform handle visual offset
+    // The transform is applied via the viewportRef's style
+  }, [viewportPan, viewportZoom, isOpen, id]);
+
+  /* ── context menu ──────────────────────────────────────────── */
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  const [_menuOpen, setMenuOpen] = useState(false);
+  const [connectMenu, setConnectMenu] = useState(false);
+  const ctxRef = useRef<HTMLDivElement>(null);
+
+  /* ── inline rename ─────────────────────────────────────────── */
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState('');
+  const [renameError, setRenameError] = useState(false);
+  const renameInputRef = useRef<HTMLInputElement>(null);
+  const renameNodeItem = useCanvasStore((s) => s.renameNodeItem);
+
+  const startRename = useCallback(() => {
+    setIsRenaming(true);
+    setRenameValue(item.name);
+    setRenameError(false);
+  }, [item.name]);
+
+  const confirmRename = useCallback(async () => {
+    const trimmed = renameValue.trim();
+    if (!trimmed || trimmed === item.name) {
+      setIsRenaming(false);
+      setRenameError(false);
+      return;
+    }
+
+    const validation = validateFileName(trimmed);
+    if (!validation.valid) {
+      setRenameError(true);
+      return;
+    }
+
+    const success = await renameNodeItem(id, trimmed);
+    if (success) {
+      setIsRenaming(false);
+      setRenameError(false);
+    } else {
+      setIsRenaming(false);
+      setRenameError(false);
+    }
+  }, [renameValue, item.name, id, renameNodeItem]);
+
+  const cancelRename = useCallback(() => {
+    setIsRenaming(false);
+    setRenameError(false);
+  }, []);
+
+  const handleRenameKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        confirmRename();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        cancelRename();
+      }
+    },
+    [confirmRename, cancelRename],
+  );
+
+  const handleRenameChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      setRenameValue(e.target.value);
+      setRenameError(false);
+    },
+    [],
+  );
+
+  /* Focus input when renaming starts */
+  useEffect(() => {
+    if (isRenaming && renameInputRef.current) {
+      renameInputRef.current.focus();
+      renameInputRef.current.select();
+    }
+  }, [isRenaming]);
+
+  const handleContextMenu = useCallback(
+    (e: ReactMouseEvent) => {
+      e.preventDefault();
+      setCtxMenu({ x: e.clientX, y: e.clientY });
+      setConnectMenu(false);
+    },
+    [],
+  );
+
+  const closeCtx = useCallback(() => {
+    setCtxMenu(null);
+    setMenuOpen(false);
+    setConnectMenu(false);
+  }, []);
+
+  const handleMenuClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      const rect = (e.target as HTMLElement).closest('button')?.getBoundingClientRect();
+      if (rect) {
+        setCtxMenu({ x: rect.left, y: rect.bottom + 4 });
+        setMenuOpen(true);
+        setConnectMenu(false);
+      }
+    },
+    [],
+  );
+
+  const handleOpenInDrive = useCallback(() => {
+    if (item.webViewLink && item.webViewLink !== '#') {
+      window.open(item.webViewLink, '_blank');
+    }
+    closeCtx();
+  }, [item.webViewLink, closeCtx]);
+
+  const handleCopyName = useCallback(() => {
+    navigator.clipboard.writeText(item.name).catch(() => {});
+    closeCtx();
+  }, [item.name, closeCtx]);
+
+  const handleOpenInNewTab = useCallback(() => {
+    const addTab = useTabStore.getState().addTab;
+    addTab(id, item.name);
+    closeCtx();
+  }, [id, item.name, closeCtx]);
+
+  const handleConnectWith = useCallback(() => {
+    setConnectMenu(true);
+  }, []);
+
+  const handleConnectToNode = useCallback(
+    (targetId: string) => {
+      onConnect({ source: id, target: targetId, sourceHandle: null, targetHandle: null });
+      closeCtx();
+    },
+    [id, onConnect, closeCtx],
+  );
+
+  const setPendingTrash = useCanvasStore((s) => s.setPendingTrash);
+
+  const handleTrash = useCallback(() => {
+    setPendingTrash([id]);
+    closeCtx();
+  }, [id, setPendingTrash, closeCtx]);
+
+  const handleBatchTrash = useCallback(() => {
+    const state = useCanvasStore.getState();
+    const ids = state.selectedNodeIds.filter((sid) => sid !== 'root');
+    state.setPendingTrash(ids);
+    closeCtx();
+  }, [closeCtx]);
+
+  const handleBatchGridLayout = useCallback(() => {
+    applyGridLayout();
+    closeCtx();
+  }, [applyGridLayout, closeCtx]);
+
+  const handleBatchClearSelection = useCallback(() => {
+    clearSelection();
+    closeCtx();
+  }, [clearSelection, closeCtx]);
+
+  /* close context menu on outside click / Escape */
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const onDown = (e: globalThis.MouseEvent) => {
+      if (ctxRef.current && !ctxRef.current.contains(e.target as Node)) {
+        closeCtx();
+      }
+    };
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === 'Escape') closeCtx();
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [ctxMenu, closeCtx]);
+
+  /* ── available connection targets ───────────────────────────── */
+  const connectTargets = useMemo(
+    () =>
+      nodes
+        .filter((n) => n.id !== id && !n.parentId)
+        .map((n) => ({
+          id: n.id,
+          name: (n.data as unknown as CanvasNodeData).driveItem.name,
+        })),
+    [nodes, id],
+  );
+
+  /* ── styles ─────────────────────────────────────────────────── */
+  const containerStyle: React.CSSProperties | undefined = isOpen
+    ? {
+        width: folderDimensions?.width ?? 640,
+        height: folderDimensions?.height ?? 320,
+      }
+    : undefined;
+
+  const borderClass = selected
+    ? 'border-indigo-500 ring-2 ring-indigo-500/20'
+    : isDragOver
+      ? 'border-indigo-500 bg-blue-50/50 shadow-lg'
+      : isSearchActive && isSearchMatch
+        ? 'border-[#1E40AF] ring-2 ring-[#1E40AF]/30'
+        : isOpen
+          ? 'border-gray-200'
+          : 'border-blue-200 motion-safe:hover:shadow-md motion-safe:hover:-translate-y-[1px]';
+
+  const opacityClass =
+    isSearchActive && !isSearchMatch ? 'opacity-30' : '';
+
+  const removingClass = isRemoving ? 'animate-fade-out' : '';
+
+  /* ── hover state ────────────────────────────────────────────── */
+  const [isHovered, setIsHovered] = useState(false);
+
+  /* ── Expand/collapse animation classes ─────────────────────── */
+  const [animating, setAnimating] = useState<'expanding' | 'collapsing' | null>(null);
+  const prevOpen = useRef(isOpen);
+
+  useEffect(() => {
+    if (isOpen && !prevOpen.current) {
+      setAnimating('expanding');
+      const t = setTimeout(() => setAnimating(null), 200);
+      prevOpen.current = true;
+      return () => clearTimeout(t);
+    } else if (!isOpen && prevOpen.current) {
+      setAnimating('collapsing');
+      const t = setTimeout(() => setAnimating(null), 300);
+      prevOpen.current = false;
+      return () => clearTimeout(t);
+    }
+  }, [isOpen]);
+
+  const animClass = animating === 'expanding'
+    ? 'animate-folder-expand'
+    : animating === 'collapsing'
+      ? 'animate-folder-collapse'
+      : '';
+
+  /* ── render ─────────────────────────────────────────────────── */
+  return (
+    <div
+      ref={rootElRef}
+      className={[
+        'relative motion-safe:transition-all select-none',
+        isOpen
+          ? 'bg-white border rounded-xl shadow-sm'
+          : 'bg-blue-50/60 border rounded-xl p-3 w-[120px] cursor-pointer',
+        borderClass,
+        opacityClass,
+        removingClass,
+        animClass,
+      ].join(' ')}
+      style={containerStyle}
+      onDoubleClick={handleDoubleClick}
+      onContextMenu={handleContextMenu}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
+      {/* ── target handle (top, invisible) ── */}
+      <Handle
+        type="target"
+        position={Position.Top}
+        className="!opacity-0 !pointer-events-auto"
+      />
+
+      {/* ── left target handle (visible on hover, closed only) ── */}
+      {!isOpen && (
+        <div
+          className={`absolute left-[-5px] top-1/2 -translate-y-1/2 motion-safe:transition-opacity ${
+            isHovered ? 'opacity-100' : 'opacity-0'
+          }`}
+        >
+          <Handle
+            type="target"
+            id="left"
+            position={Position.Left}
+            className="!w-2.5 !h-2.5 !bg-indigo-500 !border-2 !border-white !shadow-sm !relative !transform-none !top-auto !left-auto motion-safe:transition-transform motion-safe:hover:scale-125"
+          />
+        </div>
+      )}
+
+      {isOpen ? (
+        /* ════════════════════════════════════════════════════════ */
+        /*  OPEN STATE                                              */
+        /* ════════════════════════════════════════════════════════ */
+        <>
+          {/* NodeResizer — resize handles */}
+          <NodeResizer
+            minWidth={300}
+            minHeight={200}
+            onResize={handleResize}
+            keepAspectRatio={false}
+            color="#6366f1"
+            handleClassName="!w-3 !h-3 !bg-white !border-2 !border-indigo-500 !rounded-sm"
+          />
+
+          {/* ── header bar ── */}
+          <div className="flex items-center justify-between bg-blue-50 border-b border-blue-100 px-2 py-1.5 rounded-t-xl">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <button
+                onClick={handleClose}
+                className="shrink-0 p-0.5 rounded text-gray-500 hover:text-gray-700 hover:bg-blue-100 motion-safe:transition-colors active:scale-[0.97]"
+                title="Colapsar carpeta"
+              >
+                <span className="block w-4 h-4 text-[16px] leading-none font-mono text-gray-500">−</span>
+              </button>
+              <span
+                className="shrink-0 text-blue-500 flex items-center"
+                dangerouslySetInnerHTML={{ __html: OPEN_FOLDER_SVG }}
+              />
+              {isRenaming ? (
+                <input
+                  ref={renameInputRef}
+                  type="text"
+                  value={renameValue}
+                  onChange={handleRenameChange}
+                  onKeyDown={handleRenameKeyDown}
+                  onBlur={confirmRename}
+                  className={`font-display font-semibold text-sm text-gray-900 leading-tight bg-transparent border-b-2 outline-none px-0 py-0 min-w-[60px] ${
+                    renameError ? 'border-red-500' : 'border-indigo-500'
+                  }`}
+                />
+              ) : (
+                <span
+                  className="font-display font-semibold text-sm text-gray-900 truncate max-w-[120px] cursor-text"
+                  onDoubleClick={startRename}
+                  title={item.name}
+                >
+                  {item.name}
+                </span>
+              )}
+              <span className="font-body text-xs text-gray-400 shrink-0">
+                ({childCount})
+              </span>
+            </div>
+
+            <button
+              onClick={handleMenuClick}
+              className="shrink-0 p-1 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-blue-100 motion-safe:transition-colors active:scale-[0.97]"
+              title="Opciones"
+            >
+              <span dangerouslySetInnerHTML={{ __html: MENU_DOTS }} />
+            </button>
+          </div>
+
+          {/* ── internal viewport content area ── */}
+          <div
+            ref={viewportRef}
+            className="relative overflow-hidden"
+            style={{
+              width: '100%',
+              height: 'calc(100% - 34px)',
+            }}
+            onMouseDown={handleViewportMouseDown}
+            onWheel={handleViewportWheel}
+          >
+            {/* CSS transform wrapper for internal pan/zoom */}
+            <div
+              className="absolute inset-0"
+              style={{
+                transform: `translate(${viewportPan.x}px, ${viewportPan.y}px) scale(${viewportZoom})`,
+                transformOrigin: '0 0',
+                pointerEvents: 'none',
+              }}
+            />
+
+            {childCount === 0 && (
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <EmptyState
+                  icon="folder"
+                  title="Sin archivos"
+                  description="Esta carpeta no tiene archivos todavía"
+                />
+              </div>
+            )}
+
+            {/* Pan hint when no child nodes are hovered */}
+            {childCount > 0 && !panState.current.isPanning && (
+              <div className="absolute bottom-2 left-1/2 -translate-x-1/2 text-[10px] text-gray-400 pointer-events-none motion-safe:opacity-0 motion-safe:hover:opacity-100 transition-opacity">
+                Arrastrá el fondo para navegar · Ctrl+scroll para zoom
+              </div>
+            )}
+          </div>
+        </>
+      ) : (
+        /* ════════════════════════════════════════════════════════ */
+        /*  CLOSED STATE                                            */
+        /* ════════════════════════════════════════════════════════ */
+        <div className="flex flex-col items-center gap-1.5 pt-2">
+          <div
+            className="w-12 h-10"
+            dangerouslySetInnerHTML={{ __html: CLOSED_FOLDER_SVG }}
+          />
+          {isRenaming ? (
+            <input
+              ref={renameInputRef}
+              type="text"
+              value={renameValue}
+              onChange={handleRenameChange}
+              onKeyDown={handleRenameKeyDown}
+              onBlur={confirmRename}
+              className={`font-display font-semibold text-xs text-blue-900 text-center w-full bg-transparent border-b-2 outline-none px-0 py-0 ${
+                renameError ? 'border-red-500' : 'border-indigo-500'
+              }`}
+            />
+          ) : (
+            <p
+              className="font-display font-semibold text-xs text-blue-900 text-center leading-tight break-words line-clamp-2 max-w-[100px] cursor-text"
+              onDoubleClick={startRename}
+              title={item.name}
+            >
+              {item.name}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* ── source handle (bottom, invisible) ── */}
+      <Handle
+        type="source"
+        id="bottom"
+        position={Position.Bottom}
+        className="!opacity-0 !pointer-events-auto"
+      />
+
+      {/* ── source handle (right, visible on hover, closed only) ── */}
+      {!isOpen && (
+        <div
+          className={`absolute right-[-5px] top-1/2 -translate-y-1/2 motion-safe:transition-opacity ${
+            isHovered ? 'opacity-100' : 'opacity-0'
+          }`}
+        >
+          <Handle
+            type="source"
+            id="right"
+            position={Position.Right}
+            className="!w-2.5 !h-2.5 !bg-indigo-500 !border-2 !border-white !shadow-sm !relative !transform-none !top-auto !right-auto motion-safe:transition-transform motion-safe:hover:scale-125"
+          />
+        </div>
+      )}
+
+      {/* ── context menu ── */}
+      {ctxMenu && !connectMenu && !isMultiSelected && (
+        <div
+          ref={ctxRef}
+          className="fixed z-50 min-w-[190px] bg-white border border-gray-200 rounded-lg shadow-lg py-1 motion-safe:animate-fade-in-up"
+          style={{ left: ctxMenu.x, top: ctxMenu.y }}
+        >
+          <button
+            onClick={handleOpenInDrive}
+            className="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 active:scale-[0.97] cursor-pointer"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 20 20"
+              fill="currentColor"
+              width="16"
+              height="16"
+              className="shrink-0 text-gray-400"
+            >
+              <path d="M12.232 4.232a2.5 2.5 0 013.536 3.536l-1.225 1.224a.75.75 0 001.061 1.06l1.224-1.224a4 4 0 00-5.656-5.656l-3 3a4 4 0 00.225 5.865.75.75 0 00.977-1.138 2.5 2.5 0 01-.142-3.667l3-3z" />
+              <path d="M11.603 7.963a.75.75 0 00-.977 1.138 2.5 2.5 0 01.142 3.667l-3 3a2.5 2.5 0 01-3.536-3.536l1.225-1.224a.75.75 0 00-1.061-1.06l-1.224 1.224a4 4 0 105.656 5.656l3-3a4 4 0 00-.225-5.865z" />
+            </svg>
+            Abrir en Google Drive
+          </button>
+          <button
+            onClick={handleCopyName}
+            className="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 active:scale-[0.97] cursor-pointer"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 20 20"
+              fill="currentColor"
+              width="16"
+              height="16"
+              className="shrink-0 text-gray-400"
+            >
+              <path
+                fillRule="evenodd"
+                d="M13.324 3.517a2.517 2.517 0 012.66-.51l.996.38a2.517 2.517 0 011.523 2.264v7.698a2.517 2.517 0 01-1.523 2.264l-.996.38a2.517 2.517 0 01-2.66-.51l-4.39-4.39a2.517 2.517 0 010-3.562l4.39-4.39z"
+                clipRule="evenodd"
+              />
+              <path
+                fillRule="evenodd"
+                d="M2.75 3A.75.75 0 003 2.25H6.5a.75.75 0 010 1.5H3.75v6h3a.75.75 0 010 1.5h-3A1.5 1.5 0 012.25 9.75v-6A1.5 1.5 0 013.75 2.25z"
+                clipRule="evenodd"
+              />
+            </svg>
+            Copiar nombre
+          </button>
+          <div className="border-t border-gray-100 my-1" />
+          <button
+            onClick={handleOpenInNewTab}
+            className="w-full px-3 py-1.5 text-left text-sm text-blue-600 hover:bg-blue-50 flex items-center gap-2 active:scale-[0.97] cursor-pointer"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 20 20"
+              fill="currentColor"
+              width="16"
+              height="16"
+              className="shrink-0 text-blue-500"
+            >
+              <path
+                fillRule="evenodd"
+                d="M4.25 2A2.25 2.25 0 002 4.25v11.5A2.25 2.25 0 004.25 18h11.5A2.25 2.25 0 0018 15.75V4.25A2.25 2.25 0 0015.75 2H4.25zm8.5 3.5a.75.75 0 01.75.75v5.5a.75.75 0 01-1.5 0V7.56l-6.22 6.22a.75.75 0 11-1.06-1.06l6.22-6.22H8.75a.75.75 0 010-1.5h4.5z"
+                clipRule="evenodd"
+              />
+            </svg>
+            Abrir en nueva pestaña
+          </button>
+          <div className="border-t border-gray-100 my-1" />
+          <button
+            onClick={handleTrash}
+            className="w-full px-3 py-1.5 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 active:scale-[0.97] cursor-pointer"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 20 20"
+              fill="currentColor"
+              width="16"
+              height="16"
+              className="shrink-0 text-red-400"
+            >
+              <path
+                fillRule="evenodd"
+                d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c-.84 0-1.673.025-2.5.075V3.75c0-.69.56-1.25 1.25-1.25h2.5c.69 0 1.25.56 1.25 1.25v.325C11.673 4.025 10.84 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z"
+                clipRule="evenodd"
+              />
+            </svg>
+            Mover a papelera
+          </button>
+          <div className="border-t border-gray-100 my-1" />
+          <button
+            onClick={handleConnectWith}
+            className="w-full px-3 py-1.5 text-left text-sm text-indigo-600 hover:bg-indigo-50 flex items-center gap-2 active:scale-[0.97] cursor-pointer"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 20 20"
+              fill="currentColor"
+              width="16"
+              height="16"
+              className="shrink-0 text-indigo-500"
+            >
+              <path d="M4.5 2A1.5 1.5 0 003 3.5v13A1.5 1.5 0 004.5 18h11a1.5 1.5 0 001.5-1.5V7.414A1.5 1.5 0 0016.328 6.2l-4.124-4.124A1.5 1.5 0 0011.172 2H4.5z" />
+            </svg>
+            Conectar con...
+          </button>
+        </div>
+      )}
+
+      {/* ── batch context menu (multi-select) ── */}
+      {ctxMenu && !connectMenu && isMultiSelected && (
+        <div
+          ref={ctxRef}
+          className="fixed z-50 min-w-[200px] bg-white border border-gray-200 rounded-lg shadow-lg py-1 motion-safe:animate-fade-in-up"
+          style={{ left: ctxMenu.x, top: ctxMenu.y }}
+        >
+          <div className="px-3 py-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider">
+            {selectedNodeIds.length} seleccionados
+          </div>
+          <button
+            onClick={handleBatchTrash}
+            className="w-full px-3 py-1.5 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 active:scale-[0.97] cursor-pointer"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 20 20"
+              fill="currentColor"
+              width="16"
+              height="16"
+              className="shrink-0 text-red-400"
+            >
+              <path
+                fillRule="evenodd"
+                d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c-.84 0-1.673.025-2.5.075V3.75c0-.69.56-1.25 1.25-1.25h2.5c.69 0 1.25.56 1.25 1.25v.325C11.673 4.025 10.84 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z"
+                clipRule="evenodd"
+              />
+            </svg>
+            Mover a papelera ({selectedNodeIds.length})
+          </button>
+          <button
+            onClick={handleBatchGridLayout}
+            className="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 active:scale-[0.97] cursor-pointer"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="16" height="16" className="shrink-0 text-gray-400">
+              <path fillRule="evenodd" d="M4.25 2A2.25 2.25 0 002 4.25v2.5A2.25 2.25 0 004.25 9h2.5A2.25 2.25 0 009 6.75v-2.5A2.25 2.25 0 006.75 2h-2.5zm0 9A2.25 2.25 0 002 13.25v2.5A2.25 2.25 0 004.25 18h2.5A2.25 2.25 0 009 15.75v-2.5A2.25 2.25 0 006.75 11h-2.5zm9-9A2.25 2.25 0 0011 4.25v2.5A2.25 2.25 0 0013.25 9h2.5A2.25 2.25 0 0018 6.75v-2.5A2.25 2.25 0 0015.75 2h-2.5zm0 9A2.25 2.25 0 0011 13.25v2.5A2.25 2.25 0 0013.25 18h2.5A2.25 2.25 0 0018 15.75v-2.5A2.25 2.25 0 0015.75 11h-2.5z" clipRule="evenodd" />
+            </svg>
+            Alinear a grilla
+          </button>
+          <div className="border-t border-gray-100 my-1" />
+          <button
+            onClick={handleBatchClearSelection}
+            className="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 active:scale-[0.97] cursor-pointer"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="16" height="16" className="shrink-0 text-gray-400">
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clipRule="evenodd" />
+            </svg>
+            Limpiar selección
+          </button>
+        </div>
+      )}
+
+      {/* ── connect target list ── */}
+      {ctxMenu && connectMenu && (
+        <div
+          ref={ctxRef}
+          className="fixed z-50 min-w-[200px] max-h-[260px] overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg py-1 motion-safe:animate-fade-in-up"
+          style={{ left: ctxMenu.x, top: ctxMenu.y }}
+        >
+          <div className="px-3 py-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider">
+            Conectar con...
+          </div>
+          {connectTargets.length === 0 ? (
+            <div className="px-3 py-2 text-sm text-gray-400 italic">
+              No hay nodos disponibles
+            </div>
+          ) : (
+            connectTargets.map((target) => (
+              <button
+                key={target.id}
+                onClick={() => handleConnectToNode(target.id)}
+                className="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-indigo-50 flex items-center gap-2 active:scale-[0.97] truncate cursor-pointer"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 20 20"
+                  fill="currentColor"
+                  width="14"
+                  height="14"
+                  className="shrink-0 text-indigo-400"
+                >
+                  <path d="M5.75 2A1.75 1.75 0 004 3.75v12.5c0 .966.784 1.75 1.75 1.75h8.5A1.75 1.75 0 0016 16.25V3.75A1.75 1.75 0 0014.25 2h-5.5z" />
+                </svg>
+                <span className="truncate">{target.name}</span>
+              </button>
+            ))
+          )}
+          <div className="border-t border-gray-100 mt-1" />
+          <button
+            onClick={() => setConnectMenu(false)}
+            className="w-full px-3 py-1.5 text-left text-sm text-gray-500 hover:bg-gray-50 active:scale-[0.97] cursor-pointer"
+          >
+            ← Volver
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default memo(FolderNode);
