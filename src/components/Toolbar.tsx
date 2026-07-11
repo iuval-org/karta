@@ -16,6 +16,8 @@ const GRID_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" f
 
 const FIT_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="16" height="16"><path fillRule="evenodd" d="M4.25 2A2.25 2.25 0 002 4.25v2.5a.75.75 0 001.5 0v-2.5a.75.75 0 01.75-.75h2.5a.75.75 0 000-1.5h-2.5zm10.5 0a.75.75 0 000 1.5h2.5a.75.75 0 01.75.75v2.5a.75.75 0 001.5 0v-2.5A2.25 2.25 0 0015.75 2h-2.5zM3.5 15.75a.75.75 0 00-1.5 0v2.5A2.25 2.25 0 004.25 20h2.5a.75.75 0 000-1.5h-2.5a.75.75 0 01-.75-.75v-2.5zm14.5 0a.75.75 0 00-1.5 0v2.5a.75.75 0 01-.75.75h-2.5a.75.75 0 000 1.5h2.5A2.25 2.25 0 0018 18.25v-2.5z" clipRule="evenodd"/></svg>`;
 
+const HAND_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="16" height="16"><path d="M10 1a1 1 0 01.993.883L11 2v6.5a.5.5 0 001 0V4.5a1 1 0 112 0v6.914a1.5 1.5 0 01-.44 1.06l-3.293 3.293a1 1 0 01-.707.293H8.5a3.5 3.5 0 01-3.5-3.5V7a1 1 0 012 0v4a.5.5 0 001 0V5a1 1 0 112 0v4.5a.5.5 0 001 0V2a1 1 0 112 0v4.5a.5.5 0 001 0V4.5a1 1 0 112 0v6.914a3 3 0 01-.879 2.12l-3.293 3.293A3 3 0 0111.672 18H8.5A5 5 0 013.5 13V7a1 1 0 012 0v4a.5.5 0 001 0V5a1 1 0 012 0v4.5a.5.5 0 001 0V2a1 1 0 012 0v4.5a.5.5 0 001 0V4.5a1 1 0 112 0v6.914a1.5 1.5 0 01-.44 1.06l-3.293 3.293a1 1 0 01-.707.293H8.5a3.5 3.5 0 01-3.5-3.5V7a1 1 0 012 0v4a.5.5 0 001 0V5a1 1 0 012 0v4.5a.5.5 0 001 0V2a1 1 0 012 0z"/></svg>`;
+
 const SEARCH_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="16" height="16"><path fillRule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z" clipRule="evenodd"/></svg>`;
 
 /* ------------------------------------------------------------------ */
@@ -30,6 +32,8 @@ interface ToolbarProps {
 export default function Toolbar({ rootFolderName, onOpenSettings }: ToolbarProps) {
   const toggleSidebar = useSidebarStore((s) => s.toggle);
   const resetLayout = useCanvasStore((s) => s.resetLayout);
+  const panMode = useCanvasStore((s) => s.panMode);
+  const togglePanMode = useCanvasStore((s) => s.togglePanMode);
   const { fitView } = useReactFlow();
   const showBreadcrumb = usePreferencesStore((s) => s.showBreadcrumb);
 
@@ -96,6 +100,20 @@ export default function Toolbar({ rootFolderName, onOpenSettings }: ToolbarProps
           aria-label="Ajustar vista"
         >
           <span dangerouslySetInnerHTML={{ __html: FIT_ICON }} />
+        </button>
+
+        {/* Pan mode toggle */}
+        <button
+          onClick={togglePanMode}
+          className={`flex items-center justify-center w-8 h-8 rounded-md cursor-pointer motion-safe:transition-[color,background-color] active:scale-[0.97] ${
+            panMode
+              ? 'bg-indigo-600 text-white hover:bg-indigo-700'
+              : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+          }`}
+          title={panMode ? 'Modo selección (S)' : 'Modo mover (M)'}
+          aria-label={panMode ? 'Modo selección' : 'Modo mover'}
+        >
+          <span dangerouslySetInnerHTML={{ __html: HAND_ICON }} />
         </button>
       </div>
 

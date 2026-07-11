@@ -1,0 +1,1 @@
+/Users/bob/.hermes/scripts/check-ci-status.sh

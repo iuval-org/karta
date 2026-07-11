@@ -3,10 +3,37 @@ import { render, screen } from '@testing-library/react';
 import App from './App';
 
 // ---------------------------------------------------------------------------
+// Helper: creates a Zustand-like mock store whose state is built fresh each
+// time getState is called (so closures over mutable objects like authState
+// always return the current values).
+// ---------------------------------------------------------------------------
+function createMockStore(factory: () => Record<string, any>) {
+  const getState = vi.fn(() => factory());
+  const subscribe = vi.fn(() => vi.fn());
+
+  const useStore = Object.assign(
+    vi.fn((selector?: (s: any) => any) => {
+      const current = getState();
+      return selector ? selector(current) : current;
+    }),
+    { getState, subscribe },
+  );
+
+  return { useStore, getState, subscribe };
+}
+
+// ---------------------------------------------------------------------------
+// Mutable references that tests can modify; mocks read them lazily via factory
+// ---------------------------------------------------------------------------
+const authState = vi.hoisted(() => ({ user: null as any, isLoading: false }));
+const rootState = vi.hoisted(() => ({ rootFolderId: null as string | null, isLoading: false }));
+const tabsHydratedRef = vi.hoisted(() => ({ value: true }));
+
+// ---------------------------------------------------------------------------
 // Mock every module that App.tsx imports
 // ---------------------------------------------------------------------------
 
-vi.mock('../services/firebase', () => ({
+vi.mock('./services/firebase', () => ({
   auth: {},
   googleProvider: { addScope: vi.fn(), scopes: [] },
 }));
@@ -24,114 +51,121 @@ vi.mock('firebase/auth', () => ({
   }),
 }));
 
-// Use mutable objects inside mock factories so tests can change state
-const authState = vi.hoisted(() => ({ user: null as any, isLoading: false }));
-const rootState = vi.hoisted(() => ({ rootFolderId: null as string | null, isLoading: false }));
-const tabsHydratedRef = vi.hoisted(() => ({ value: true }));
+vi.mock('./stores/authStore', () => {
+  const { useStore } = createMockStore(() => ({
+    user: authState.user,
+    isLoading: authState.isLoading,
+    oAuthAccessToken: authState.user ? 'token' : null,
+    error: null,
+    loginWithGoogle: vi.fn(),
+    logout: vi.fn(),
+    getAccessToken: vi.fn(() => Promise.resolve(authState.user ? 'token' : null)),
+  }));
+  return { useAuthStore: useStore };
+});
 
-vi.mock('../stores/authStore', () => ({
-  useAuthStore: {
-    getState: vi.fn(() => ({
-      user: authState.user,
-      isLoading: authState.isLoading,
-      oAuthAccessToken: authState.user ? 'token' : null,
-      getAccessToken: vi.fn().mockResolvedValue(authState.user ? 'token' : null),
-    })),
-    subscribe: vi.fn(() => vi.fn()),
-  },
-}));
+vi.mock('./stores/rootStore', () => {
+  const mockHydrate = vi.fn().mockResolvedValue(undefined);
+  const mockSetRoot = vi.fn();
+  const mockChangeRoot = vi.fn();
 
-vi.mock('../stores/rootStore', () => ({
-  useRootStore: {
-    getState: vi.fn(() => ({
-      rootFolderId: rootState.rootFolderId,
-      rootFolderName: rootState.rootFolderId ? 'Mi Unidad' : '',
-      isLoading: rootState.isLoading,
-      hydrated: true,
-      hydrate: vi.fn().mockResolvedValue(undefined),
-      setRoot: vi.fn(),
-      changeRoot: vi.fn(),
-    })),
-    subscribe: vi.fn(() => vi.fn()),
-  },
-}));
+  const { useStore } = createMockStore(() => ({
+    rootFolderId: rootState.rootFolderId,
+    rootFolderName: rootState.rootFolderId ? 'Mi Unidad' : '',
+    isLoading: rootState.isLoading,
+    hydrated: true,
+    setRoot: mockSetRoot,
+    changeRoot: mockChangeRoot,
+    hydrate: mockHydrate,
+  }));
 
-const mockLoadItems = vi.fn().mockResolvedValue(undefined);
-const mockResetLayout = vi.fn();
+  return { useRootStore: useStore };
+});
 
-vi.mock('../stores/canvasStore', () => ({
-  useCanvasStore: {
-    getState: vi.fn(() => ({
-      nodes: [],
-      edges: [],
-      allItems: [],
-      isLoading: false,
-      error: null,
-      errorType: null,
-      layout: 'grid',
-      loadItems: mockLoadItems,
-      resetLayout: mockResetLayout,
-    })),
-    subscribe: vi.fn(() => vi.fn()),
-  },
-}));
+const mockLoadItems = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const mockResetLayout = vi.hoisted(() => vi.fn());
 
-vi.mock('../stores/tabStore', () => ({
-  useTabStore: {
-    getState: vi.fn(() => ({
-      tabs: [{ tabId: 'root', title: 'Karta', folderId: 'root', order: 0 }],
-      activeTabId: 'root',
-      hydrated: tabsHydratedRef.value,
-      loadTabs: vi.fn().mockResolvedValue(undefined),
-      addTab: vi.fn(),
-      persistTabs: vi.fn().mockResolvedValue(undefined),
-      switchTab: vi.fn(),
-    })),
-    subscribe: vi.fn(() => vi.fn()),
-  },
-  isRootTab: vi.fn((id: string) => id === 'root'),
-}));
+vi.mock('./stores/canvasStore', () => {
+  const { useStore } = createMockStore(() => ({
+    nodes: [],
+    edges: [],
+    allItems: [],
+    isLoading: false,
+    error: null,
+    errorType: null,
+    layout: 'grid',
+    loadItems: mockLoadItems,
+    resetLayout: mockResetLayout,
+  }));
 
-vi.mock('../stores/sidebarStore', () => ({
-  useSidebarStore: {
-    getState: vi.fn(() => ({ hydrate: vi.fn() })),
-    subscribe: vi.fn(() => vi.fn()),
-  },
-}));
+  return { useCanvasStore: useStore };
+});
 
-const mockLoadPreferences = vi.fn().mockResolvedValue(undefined);
+vi.mock('./stores/tabStore', () => {
+  const mockLoadTabs = vi.fn().mockResolvedValue(undefined);
+  const mockAddTab = vi.fn();
+  const mockPersistTabs = vi.fn().mockResolvedValue(undefined);
+  const mockSwitchTab = vi.fn();
 
-vi.mock('../stores/preferencesStore', () => ({
-  usePreferencesStore: {
-    getState: vi.fn(() => ({
-      snapToGrid: true,
-      showMinimap: true,
-      showBackground: true,
-      zoomOnScroll: true,
-      sidebarOpen: true,
-      showBreadcrumb: true,
-      locale: 'es',
-      loaded: false,
-      load: mockLoadPreferences,
-    })),
-    subscribe: vi.fn(() => vi.fn()),
-  },
-}));
+  const { useStore } = createMockStore(() => ({
+    tabs: [{ tabId: 'root', title: 'Karta', folderId: 'root', order: 0 }],
+    activeTabId: 'root',
+    hydrated: tabsHydratedRef.value,
+    loadTabs: mockLoadTabs,
+    addTab: mockAddTab,
+    persistTabs: mockPersistTabs,
+    switchTab: mockSwitchTab,
+  }));
 
-vi.mock('../stores/connectivityStore', () => ({
+  return { useTabStore: useStore, isRootTab: vi.fn((id: string) => id === 'root') };
+});
+
+vi.mock('./stores/sidebarStore', () => {
+  const mockHydrate = vi.fn();
+
+  const { useStore } = createMockStore(() => ({
+    isOpen: true,
+    hydrated: false,
+    toggle: vi.fn(),
+    setOpen: vi.fn(),
+    hydrate: mockHydrate,
+  }));
+
+  return { useSidebarStore: useStore };
+});
+
+const mockLoadPreferences = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+
+vi.mock('./stores/preferencesStore', () => {
+  const { useStore } = createMockStore(() => ({
+    snapToGrid: true,
+    showMinimap: true,
+    showBackground: true,
+    zoomOnScroll: true,
+    sidebarOpen: true,
+    showBreadcrumb: true,
+    locale: 'es',
+    loaded: false,
+    load: mockLoadPreferences,
+  }));
+
+  return { usePreferencesStore: useStore };
+});
+
+vi.mock('./stores/connectivityStore', () => ({
   initConnectivityListeners: vi.fn(() => vi.fn()),
 }));
 
-vi.mock('../hooks/useKeyboardShortcuts', () => ({
+vi.mock('./hooks/useKeyboardShortcuts', () => ({
   useKeyboardShortcuts: vi.fn(),
 }));
 
 // Layout components
-vi.mock('../layouts/AuthLayout', () => ({
+vi.mock('./layouts/AuthLayout', () => ({
   default: () => <div data-testid="auth-layout">Auth Layout</div>,
 }));
 
-vi.mock('../layouts/AppLayout', () => ({
+vi.mock('./layouts/AppLayout', () => ({
   default: ({ tabBar, sidebar, toolbar, canvas, statusBar }: any) => (
     <div data-testid="app-layout">
       {tabBar}
@@ -143,43 +177,43 @@ vi.mock('../layouts/AppLayout', () => ({
   ),
 }));
 
-vi.mock('../components/RootPicker', () => ({
+vi.mock('./components/RootPicker', () => ({
   default: () => <div data-testid="root-picker">Root Picker</div>,
 }));
 
-vi.mock('../components/Canvas', () => ({
+vi.mock('./components/Canvas', () => ({
   default: () => <div data-testid="canvas">Canvas</div>,
 }));
 
-vi.mock('../components/TabBar', () => ({
+vi.mock('./components/TabBar', () => ({
   default: () => <div data-testid="tab-bar">Tab Bar</div>,
 }));
 
-vi.mock('../components/Sidebar', () => ({
+vi.mock('./components/Sidebar', () => ({
   default: () => <div data-testid="sidebar">Sidebar</div>,
 }));
 
-vi.mock('../components/Toolbar', () => ({
+vi.mock('./components/Toolbar', () => ({
   default: () => <div data-testid="toolbar">Toolbar</div>,
 }));
 
-vi.mock('../components/StatusBar', () => ({
+vi.mock('./components/StatusBar', () => ({
   default: () => <div data-testid="status-bar">Status Bar</div>,
 }));
 
-vi.mock('../components/Toast', () => ({
+vi.mock('./components/Toast', () => ({
   default: () => <div data-testid="toast">Toast</div>,
 }));
 
-vi.mock('../components/OfflineBanner', () => ({
+vi.mock('./components/OfflineBanner', () => ({
   default: () => <div data-testid="offline-banner">Offline Banner</div>,
 }));
 
-vi.mock('../components/ShortcutHelp', () => ({
+vi.mock('./components/ShortcutHelp', () => ({
   default: () => <div data-testid="shortcut-help">Shortcut Help</div>,
 }));
 
-vi.mock('../components/SettingsModal', () => ({
+vi.mock('./components/SettingsModal', () => ({
   default: ({ isOpen }: any) =>
     isOpen ? <div data-testid="settings-modal">Settings</div> : null,
 }));

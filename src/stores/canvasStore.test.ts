@@ -120,6 +120,7 @@ beforeEach(() => {
     currentFolderId: '',
     activeTabId: 'root',
     selectedNodeIds: [],
+    panMode: false,
   });
 
   vi.clearAllMocks();

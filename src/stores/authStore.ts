@@ -3,6 +3,7 @@ import {
   onAuthStateChanged,
   signInWithPopup,
   signOut,
+  reauthenticateWithPopup,
   GoogleAuthProvider,
 } from 'firebase/auth';
 import type { User } from 'firebase/auth';
@@ -30,6 +31,8 @@ interface AuthState {
   loginWithGoogle: () => Promise<void>;
   logout: () => Promise<void>;
   getAccessToken: () => Promise<string | null>;
+  clearAccessToken: () => void;
+  refreshAccessToken: () => Promise<string | null>;
 }
 
 export const useAuthStore = create<AuthState>((set, get) => {
@@ -76,33 +79,41 @@ export const useAuthStore = create<AuthState>((set, get) => {
 
     getAccessToken: async () => {
       const { oAuthAccessToken } = get();
-      // Return cached OAuth token (from memory or sessionStorage)
       if (oAuthAccessToken) return oAuthAccessToken;
 
-      // Try sessionStorage (survives refresh)
       const stored = loadOAuthToken();
       if (stored) {
         set({ oAuthAccessToken: stored });
         return stored;
       }
 
-      // If we have a user but no OAuth token, re-authenticate silently
-      const { user } = get();
-      if (user) {
-        try {
-          // Force re-authentication to get fresh OAuth token
-          const result = await signInWithPopup(auth, googleProvider);
-          const credential = GoogleAuthProvider.credentialFromResult(result);
-          const token = credential?.accessToken ?? null;
-          saveOAuthToken(token);
-          set({ oAuthAccessToken: token });
-          return token;
-        } catch {
-          return null;
-        }
-      }
-
       return null;
+    },
+
+    clearAccessToken: () => {
+      saveOAuthToken(null);
+      set({ oAuthAccessToken: null });
+    },
+
+    refreshAccessToken: async () => {
+      const { user } = get();
+      if (!user) return null;
+
+      // Clear stale token first
+      saveOAuthToken(null);
+      set({ oAuthAccessToken: null });
+
+      try {
+        // Re-authenticate with popup to get fresh OAuth access token
+        const result = await reauthenticateWithPopup(user, googleProvider);
+        const credential = GoogleAuthProvider.credentialFromResult(result);
+        const token = credential?.accessToken ?? null;
+        saveOAuthToken(token);
+        set({ oAuthAccessToken: token });
+        return token;
+      } catch {
+        return null;
+      }
     },
   };
 });

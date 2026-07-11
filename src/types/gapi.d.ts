@@ -7,6 +7,12 @@ interface Window {
     client?: {
       setToken(token: { access_token: string }): void;
       load(api: string, version: string): Promise<void>;
+      request<T = GapiDriveFile>(params: {
+        path: string;
+        method: string;
+        params?: Record<string, string>;
+        body?: Record<string, unknown>;
+      }): Promise<{ result: T; status?: number; statusText?: string }>;
       drive: {
         files: {
           list(

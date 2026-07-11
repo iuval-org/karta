@@ -7,6 +7,7 @@ import {
   BackgroundVariant,
   useReactFlow,
   MarkerType,
+  PanOnScrollMode,
   type Node,
   type OnConnect,
   type Edge,
@@ -151,17 +152,12 @@ function Flow() {
     };
   }, [edgeCtxMenu, handleEdgeCtxClose]);
 
-  /* ── context menu for creating new items ─────────────────────── */
-  const [ctxMenu, setCtxMenu] = useState<{
-    x: number;
-    y: number;
-  } | null>(null);
-  const ctxRef = useRef<HTMLDivElement>(null);
-
+  /* ── CreateModal ────────────────────────────────────────────── */
   const [createModal, setCreateModal] = useState<{
     title: string;
     mimeType: string;
     parentFolderId: string;
+    position?: { x: number; y: number };
   } | null>(null);
 
   const addNewItem = useCanvasStore((s) => s.addNewItem);
@@ -170,66 +166,64 @@ function Flow() {
   /** Determine the parent folder for new items. */
   const getParentFolderId = useCallback(() => {
     // If navigating inside a subfolder, use that folder's ID
-    // Otherwise, use the root folder ID (or empty for mock root)
-    return currentFolderId || '';
-  }, [currentFolderId]);
+    // Otherwise, use the root folder ID (or 'root' as fallback)
+    return currentFolderId || rootFolderId || 'root';
+  }, [currentFolderId, rootFolderId]);
 
-  /** Handle right-click on the empty canvas pane (background). */
-  const onPaneContextMenu = useCallback(
-    (event: React.MouseEvent | MouseEvent) => {
-      event.preventDefault();
-      setCtxMenu({ x: event.clientX, y: event.clientY });
-    },
-    [],
-  );
+  /* ── drag & drop from sidebar onto canvas ────────────────────── */
+  const reactFlowInstance = useReactFlow();
 
-  /** Close the context menu. */
-  const closeCtx = useCallback(() => {
-    setCtxMenu(null);
+  const onDragOver = useCallback((event: React.DragEvent) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    event.currentTarget.classList.add('drag-over');
   }, []);
 
-  /** Close context menu on outside click / Escape. */
-  useEffect(() => {
-    if (!ctxMenu) return;
-    const onDown = (e: globalThis.MouseEvent) => {
-      if (ctxRef.current && e.target instanceof globalThis.Node && !ctxRef.current.contains(e.target)) {
-        closeCtx();
-      }
-    };
-    const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key === 'Escape') closeCtx();
-    };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [ctxMenu, closeCtx]);
+  const onDragLeave = useCallback((event: React.DragEvent) => {
+    event.currentTarget.classList.remove('drag-over');
+  }, []);
 
-  /** Handle "Nuevo" submenu item click → open CreateModal. */
-  const handleNewItemClick = useCallback(
-    (typeLabel: string, mimeType: string) => {
-      const parentId = getParentFolderId();
-      setCreateModal({
-        title: `Nuevo ${typeLabel}`,
-        mimeType,
-        parentFolderId: parentId,
+  const onDrop = useCallback(
+    (event: React.DragEvent) => {
+      event.preventDefault();
+      event.currentTarget.classList.remove('drag-over');
+      const mimeType = event.dataTransfer.getData('application/karta-type');
+      if (!mimeType) return;
+
+      const position = reactFlowInstance.screenToFlowPosition({
+        x: event.clientX,
+        y: event.clientY,
       });
-      closeCtx();
+
+      // Determine label
+      let label = 'Elemento';
+      if (mimeType === CREATE_MIME_TYPES.folder) label = 'Carpeta';
+      else if (mimeType === CREATE_MIME_TYPES.document) label = 'Documento';
+      else if (mimeType === CREATE_MIME_TYPES.spreadsheet) label = 'Planilla';
+      else if (mimeType === CREATE_MIME_TYPES.presentation) label = 'Presentación';
+
+      setCreateModal({
+        title: `Nuevo ${label}`,
+        mimeType,
+        parentFolderId: getParentFolderId(),
+        position,
+      });
     },
-    [getParentFolderId, closeCtx],
+    [reactFlowInstance, getParentFolderId],
   );
 
   /** Handle CreateModal submission → call Drive API, add to canvas. */
   const [isCreating, setIsCreating] = useState(false);
 
   const handleCreateSubmit = useCallback(
-    async (name: string, mimeType: string, parentFolderId: string) => {
+    async (name: string, mimeType: string, parentFolderId: string, dropPosition?: { x: number; y: number }) => {
+      console.log('[CREATE] handleCreateSubmit called:', { name, mimeType, parentFolderId, dropPosition });
       setIsCreating(true);
       try {
+        console.log('[CREATE] calling createItem…');
         const newItem = await createItem(name, mimeType, parentFolderId);
-        addNewItem(newItem);
+        console.log('[CREATE] createItem succeeded, result:', newItem);
+        addNewItem(newItem, dropPosition);
         setCreateModal(null);
 
         // Determine label for toast
@@ -469,7 +463,12 @@ function Flow() {
   }
 
   return (
-    <div className="w-full h-full relative">
+    <div
+      className="w-full h-full relative"
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -484,11 +483,15 @@ function Flow() {
         minZoom={0.1}
         maxZoom={2}
         colorMode="light"
-        zoomOnScroll={prefs.zoomOnScroll}
+        zoomOnScroll={true}
+        zoomOnDoubleClick={false}
+        panOnScroll={true}
+        panOnScrollMode={PanOnScrollMode.Free}
+        panActivationKeyCode=""
         deleteKeyCode="Delete"
-        selectionOnDrag
+        selectionOnDrag={false}
         multiSelectionKeyCode="Shift"
-        panOnDrag={[1, 2]}
+        panOnDrag={true}
         onSelectionChange={(params: { nodes: Node[] }) => {
           useCanvasStore.getState().setSelectedNodeIds(params.nodes.map((n) => n.id));
         }}
@@ -501,7 +504,6 @@ function Flow() {
         onNodeDragStart={onNodeDragStart}
         onNodeDrag={onNodeDrag}
         onNodeDragStop={onNodeDragStop}
-        onContextMenu={onPaneContextMenu}
       >
         {prefs.showBackground && <Background variant={BackgroundVariant.Dots} gap={20} size={1} />}
         <Controls position="bottom-left" />
@@ -561,103 +563,6 @@ function Flow() {
         </div>
       )}
 
-      {/* ── pane context menu: Nuevo ── */}
-      {ctxMenu && (
-        <div
-          ref={ctxRef}
-          className="fixed z-50 min-w-[180px] bg-white border border-gray-200 rounded-lg shadow-lg py-1 motion-safe:animate-fade-in-up"
-          style={{ left: ctxMenu.x, top: ctxMenu.y }}
-        >
-          <div className="px-3 py-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider">
-            Nuevo
-          </div>
-          <button
-            onClick={() =>
-              handleNewItemClick('Carpeta', CREATE_MIME_TYPES.folder)
-            }
-            className="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 active:scale-[0.97] cursor-pointer"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 20 20"
-              fill="currentColor"
-              width="16"
-              height="16"
-              className="shrink-0 text-amber-500"
-            >
-              <path d="M3.75 3A1.75 1.75 0 002 4.75v10.5c0 .966.784 1.75 1.75 1.75h12.5A1.75 1.75 0 0018 15.25v-8.5A1.75 1.75 0 0016.25 5h-4.836a.25.25 0 01-.177-.073L9.823 3.513A1.75 1.75 0 008.586 3H3.75z" />
-            </svg>
-            Carpeta
-          </button>
-          <button
-            onClick={() =>
-              handleNewItemClick('Documento', CREATE_MIME_TYPES.document)
-            }
-            className="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 active:scale-[0.97] cursor-pointer"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 20 20"
-              fill="currentColor"
-              width="16"
-              height="16"
-              className="shrink-0 text-blue-500"
-            >
-              <path
-                fillRule="evenodd"
-                d="M4.5 2A1.5 1.5 0 003 3.5v13A1.5 1.5 0 004.5 18h11a1.5 1.5 0 001.5-1.5V7.414A1.5 1.5 0 0016.328 6.2l-4.124-4.124A1.5 1.5 0 0011.172 2H4.5zm4.75 4.5a.75.75 0 000 1.5h1.5a.75.75 0 000-1.5h-1.5zm0 3a.75.75 0 000 1.5h3.5a.75.75 0 000-1.5h-3.5zm0 3a.75.75 0 000 1.5h2.5a.75.75 0 000-1.5h-2.5z"
-                clipRule="evenodd"
-              />
-            </svg>
-            Documento de Google
-          </button>
-          <button
-            onClick={() =>
-              handleNewItemClick('Planilla', CREATE_MIME_TYPES.spreadsheet)
-            }
-            className="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 active:scale-[0.97] cursor-pointer"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 20 20"
-              fill="currentColor"
-              width="16"
-              height="16"
-              className="shrink-0 text-green-600"
-            >
-              <path
-                fillRule="evenodd"
-                d="M3 3.5A1.5 1.5 0 014.5 2h11A1.5 1.5 0 0117 3.5v13A1.5 1.5 0 0115.5 18h-11A1.5 1.5 0 013 16.5v-13zM5 5a1 1 0 011-1h8a1 1 0 011 1v2a1 1 0 01-1 1H6a1 1 0 01-1-1V5zm0 5a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H6a1 1 0 01-1-1v-5z"
-                clipRule="evenodd"
-              />
-            </svg>
-            Planilla de Google
-          </button>
-          <button
-            onClick={() =>
-              handleNewItemClick('Presentación', CREATE_MIME_TYPES.presentation)
-            }
-            className="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 active:scale-[0.97] cursor-pointer"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 20 20"
-              fill="currentColor"
-              width="16"
-              height="16"
-              className="shrink-0 text-orange-500"
-            >
-              <path
-                fillRule="evenodd"
-                d="M2 3.75A.75.75 0 012.75 3h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 3.75zm0 4.167a.75.75 0 01.75-.75h14.5a.75.75 0 010 1.5H2.75a.75.75 0 01-.75-.75zm0 4.166a.75.75 0 01.75-.75h14.5a.75.75 0 010 1.5H2.75a.75.75 0 01-.75-.75zm0 4.167a.75.75 0 01.75-.75h14.5a.75.75 0 010 1.5H2.75a.75.75 0 01-.75-.75z"
-                clipRule="evenodd"
-              />
-            </svg>
-            Presentación
-          </button>
-        </div>
-      )}
-
       {/* ── CreateModal ── */}
       {createModal && (
         <CreateModal
@@ -667,6 +572,7 @@ function Flow() {
               name,
               createModal.mimeType,
               createModal.parentFolderId,
+              createModal.position,
             )
           }
           onCancel={handleCreateCancel}

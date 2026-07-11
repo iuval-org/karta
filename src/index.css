@@ -91,6 +91,13 @@
   }
 }
 
+/* ── Drag & drop feedback ──────────────────────────────────── */
+.react-flow.drag-over {
+  outline: 2px dashed #4f46e5;
+  outline-offset: -2px;
+  outline-style: dashed;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-fade-in-up,
   .animate-toast-in,

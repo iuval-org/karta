@@ -71,6 +71,13 @@ interface CanvasState {
   /** IDs of items pending trash confirmation (to show ConfirmModal in Canvas). */
   pendingTrashItemIds: string[];
 
+  /** Pan mode: when true, drag moves the canvas (pan) instead of selecting. */
+  panMode: boolean;
+  /** Enable or disable pan mode. */
+  setPanMode: (enabled: boolean) => void;
+  /** Toggle pan mode on/off. */
+  togglePanMode: () => void;
+
   /** Set pending trash item IDs (opens ConfirmModal in Canvas). */
   setPendingTrash: (fileIds: string[]) => void;
 
@@ -110,10 +117,11 @@ interface CanvasState {
 
   /**
    * Add a newly created Drive item to the canvas as a new node.
-   * Calculates the next available grid position, creates the node,
-   * selects it automatically, and adds it to allItems.
+   * If a position is provided, places the node there (drag & drop).
+   * Otherwise, calculates the next available grid position (context menu).
+   * Selects the new node automatically, and adds it to allItems.
    */
-  addNewItem: (driveItem: DriveItem) => void;
+  addNewItem: (driveItem: DriveItem, position?: { x: number; y: number }) => void;
 
   /**
    * Move an item (file or folder) into a target folder.
@@ -287,6 +295,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   folderHoverTarget: null,
   removingNodeIds: [],
   pendingTrashItemIds: [],
+  panMode: typeof window !== 'undefined' && navigator.maxTouchPoints > 0,
 
   /* ── load ──────────────────────────────────────────────────── */
 
@@ -1137,22 +1146,24 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   /* ── Add new item (create from context menu) ─────────────────── */
 
-  addNewItem: (driveItem: DriveItem) => {
+  addNewItem: (driveItem: DriveItem, position?: { x: number; y: number }) => {
     const { nodes, allItems } = get();
 
     // 1. Add to allItems
     const updatedAllItems = [...allItems, driveItem];
 
-    // 2. Calculate next available grid position for root-level items
-    const columns = 6;
-    const gapX = 220;
-    const gapY = 160;
-    const rootLevelNodes = nodes.filter((n) => !n.parentId);
-    const nextIndex = rootLevelNodes.length;
-    const position = {
-      x: (nextIndex % columns) * gapX,
-      y: Math.floor(nextIndex / columns) * gapY,
-    };
+    // 2. Calculate position — use provided position (drop) or grid next slot
+    const finalPosition: { x: number; y: number } = position ?? (() => {
+      const columns = 6;
+      const gapX = 220;
+      const gapY = 160;
+      const rootLevelNodes = nodes.filter((n) => !n.parentId);
+      const nextIndex = rootLevelNodes.length;
+      return {
+        x: (nextIndex % columns) * gapX,
+        y: Math.floor(nextIndex / columns) * gapY,
+      };
+    })();
 
     // 3. Deselect all existing nodes, create the new node as selected
     const updatedNodes: Node<CanvasNodeData>[] = nodes.map((n) => ({
@@ -1163,7 +1174,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const newNode: Node<CanvasNodeData> = {
       id: driveItem.id,
       type: driveItem.isFolder ? 'folderNode' : 'fileNode',
-      position,
+      position: finalPosition,
       data: { driveItem },
       deletable: false,
       selected: true,
@@ -1179,6 +1190,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   /* ── Remove items (trash from canvas) ────────────────────────── */
+
+  setPanMode: (enabled: boolean) => {
+    set({ panMode: enabled });
+  },
+
+  togglePanMode: () => {
+    set((state) => ({ panMode: !state.panMode }));
+  },
 
   setPendingTrash: (fileIds: string[]) => {
     set({ pendingTrashItemIds: fileIds });

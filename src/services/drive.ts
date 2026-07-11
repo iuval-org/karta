@@ -140,18 +140,22 @@ async function withRetry<T>(
         );
       }
 
-      // Token expired (401) — refrescar y reintentar una vez
+      // Token expired (401) — refrescar y reintentar
       if (
         isGapiError(err) &&
         (err.status === 401 ||
           err.result?.error?.message?.includes('Token expired'))
       ) {
         if (attempt < maxRetries) {
-          const token = await useAuthStore.getState().getAccessToken();
+          // Clear stale token first to avoid returning cached expired token
+          useAuthStore.getState().clearAccessToken();
+          // Refresh token via re-authentication popup
+          const token = await useAuthStore.getState().refreshAccessToken();
           if (token) {
             window.gapi.client?.setToken({ access_token: token });
+            continue; // Retry with fresh token
           }
-          continue;
+          // Could not refresh — stop retrying to avoid infinite loop
         }
         throw new Error(
           'Sesión expirada. Inicia sesión nuevamente.',
@@ -401,17 +405,27 @@ export async function createItem(
     body.parents = [parentFolderId];
   }
 
+  const hasToken = !!((window as any).gapi?.auth?.getToken?.());
+  console.log('[CREATE] createItem called:', { name, mimeType, parentFolderId, mockMode: getUseMock(), hasToken });
+
   const response = await withRetry(async () => {
     const client = window.gapi.client;
-    if (!client?.drive) {
+    if (!client) {
       throw new Error('Drive API no está cargada.');
     }
-    return client.drive.files.create(body, {
-      fields: 'id,name,mimeType,webViewLink,modifiedTime,iconLink',
+    return client.request({
+      path: '/drive/v3/files',
+      method: 'POST',
+      params: { fields: 'id,name,mimeType,webViewLink,modifiedTime,iconLink' },
+      body,
     });
   });
 
+  console.log('[CREATE] Drive API response:', response);
+  console.log('[CREATE] response.result:', response.result);
+
   const item = mapToDriveItem(response.result);
+  console.log('[CREATE] mapped item:', item);
   setCache(item.id, item);
   return item;
 }
