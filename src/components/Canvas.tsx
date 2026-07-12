@@ -29,6 +29,7 @@ import { useNavigationStore } from '../stores/navigationStore';
 import { useRootStore } from '../stores/rootStore';
 import { createItem, CREATE_MIME_TYPES } from '../services/drive';
 import ConfirmModal from './ConfirmModal';
+import { isInsideFolder } from '../utils/folderBounds';
 
 const nodeTypes = {
   fileNode: FileNode,
@@ -79,6 +80,8 @@ function Flow() {
 
   /* ── Filter visible nodes ────────────────────────────────────── */
   // All nodes are root-level. Nodes inside a collapsed folder are hidden.
+  // Children of expanded folders are hidden if they fall outside the
+  // folder's bounding box (visual clipping).
   const visibleNodes = nodes.filter((node) => {
     if (node.type === 'folderNode') return true;
 
@@ -87,15 +90,32 @@ function Flow() {
     if (!driveItem?.parentId) return true; // root-level items always visible
 
     // Direct children of the root Drive folder are always visible.
-    // The root folder itself is not a node on the canvas, so its
-    // expandedFolders entry is never set. Without this check, all
-    // top-level files/folders from the real Drive API would be hidden.
     const rootFolderId = useRootStore.getState().rootFolderId;
     if (rootFolderId && driveItem.parentId === rootFolderId) return true;
 
     // Only show items whose parent folder is expanded.
-    // expandedFolders only contains entries for folders that ARE expanded (value = true).
-    return expandedFolders[driveItem.parentId] === true;
+    if (expandedFolders[driveItem.parentId] !== true) return false;
+
+    // Parent is expanded — check if this child falls within the folder's
+    // bounding box. Children outside are clipped (hidden).
+    const parentNode = nodes.find((n) => n.id === driveItem.parentId);
+    if (!parentNode) return false;
+
+    const parentSize = {
+      width: (parentNode as any).width ?? (parentNode as any).measured?.width ?? 640,
+      height: (parentNode as any).height ?? (parentNode as any).measured?.height ?? 320,
+    };
+    const childSize = {
+      width: (node as any).width ?? (node as any).measured?.width ?? 180,
+      height: (node as any).height ?? (node as any).measured?.height ?? 170,
+    };
+
+    return isInsideFolder(
+      node.position,
+      childSize,
+      parentNode.position,
+      parentSize,
+    );
   });
 
   const initialized = nodes.length > 0;
