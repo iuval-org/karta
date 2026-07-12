@@ -548,6 +548,7 @@ function Flow() {
         panActivationKeyCode=""
         deleteKeyCode="Delete"
         selectionOnDrag={true}
+        selectNodesOnDrag={false}
         selectionMode={SelectionMode.Partial}
         multiSelectionKeyCode="Shift"
         panOnDrag={[1]}
