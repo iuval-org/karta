@@ -630,12 +630,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const currentlyOpen = expandedFolders[folderId] ?? false;
 
     if (currentlyOpen) {
-      // CLOSE: remove from expandedFolders and strip expanded
-      // width/height/measured from the node so ReactFlow re-measures
-      // the now-collapsed node from the DOM. Keep expandedFolderDims
-      // intact so the saved expanded size persists across collapse/re-expand.
-      // Also clear zIndex from children so they don't carry stale
-      // elevated z-index into other contexts.
+      // CLOSE: remove from expandedFolders. Set collapsed width (180)
+      // and strip expanded height + measured so ReactFlow re-measures
+      // the collapsed height from the DOM. Keep expandedFolderDims
+      // intact so the saved expanded size persists across collapse/
+      // re-expand. Clear zIndex from children.
       const next = { ...expandedFolders };
       delete next[folderId];
 
@@ -645,9 +644,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       );
       const updatedNodes = nodes.map((n) => {
         if (n.id === folderId) {
-          // Remove stale width/height/measured so ReactFlow re-measures
-          const { width, height, measured, ...rest } = n as any;
-          return rest;
+          // Set collapsed width (matching containerStyle). Strip height
+          // and measured so ReactFlow measures the auto-height from the
+          // DOM. This avoids the flicker that happens when stripping all
+          // dimensions at once (node briefly has undefined size).
+          const { width: _w, height: _h, measured: _m, ...rest } = n as any;
+          return { ...rest, width: 180 };
         }
         if (childIds.has(n.id)) {
           // Clear elevated zIndex set during expand
