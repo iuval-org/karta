@@ -12,6 +12,8 @@ export interface NodePosition {
   x: number;
   y: number;
   tabId: string; // 'root' o folderId
+  width?: number;
+  height?: number;
 }
 
 export interface StoredEdge {
@@ -26,6 +28,8 @@ export interface FolderStateRow {
   folderId: string; // PK
   isOpen: boolean;
   tabId: string;
+  width?: number;
+  height?: number;
 }
 
 export interface StoredTab {

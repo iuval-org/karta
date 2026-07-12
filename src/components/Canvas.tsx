@@ -58,11 +58,21 @@ function Flow() {
   const storeOnNodeDragStart = useCanvasStore((s) => s.onNodeDragStart);
   const storeOnNodeDrag = useCanvasStore((s) => s.onNodeDrag);
   const storeOnNodeDragStop = useCanvasStore((s) => s.onNodeDragStop);
+  const persistNow = useCanvasStore((s) => s.persistNow);
   const { fitView } = useReactFlow();
   const { getIntersectingNodes } = useReactFlow();
   const logout = useAuthStore((s) => s.logout);
 
   const prefs = usePreferencesStore();
+
+  /* ── Flush pending saves before tab close ──────────────────── */
+  useEffect(() => {
+    const onBeforeUnload = () => {
+      persistNow(); // Best-effort: save to Dexie before the tab closes
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [persistNow]);
 
   /* ── Multi-selection drag state (track origins of all selected nodes) ── */
   const multiDragOriginsRef = useRef<Record<string, { x: number; y: number }>>({});

@@ -43,6 +43,8 @@ export interface FirestorePosition {
   zIndex: number;
   tabId: string;
   updatedAt: number;
+  width?: number;
+  height?: number;
 }
 
 export type RemoteChangeCallback = (positions: NodePosition[]) => void;
@@ -75,6 +77,9 @@ function toNodePosition(fp: FirestorePosition): NodePosition {
     x: fp.x,
     y: fp.y,
     tabId: fp.tabId ?? '',
+    ...(fp.width != null && fp.height != null
+      ? { width: fp.width, height: fp.height }
+      : {}),
   };
 }
 
@@ -102,7 +107,7 @@ export async function syncToFirestore(
 
     for (const pos of positions) {
       const ref = positionDocRef(userId, pos.fileId);
-      batch.set(ref, {
+      const data: FirestorePosition = {
         fileId: pos.fileId,
         folderId: pos.tabId,
         x: pos.x,
@@ -110,7 +115,12 @@ export async function syncToFirestore(
         zIndex: 0,
         tabId: pos.tabId,
         updatedAt: now,
-      } satisfies FirestorePosition);
+      };
+      if (pos.width != null && pos.height != null) {
+        data.width = pos.width;
+        data.height = pos.height;
+      }
+      batch.set(ref, data);
     }
 
     await batch.commit();

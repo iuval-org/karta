@@ -283,12 +283,17 @@ const debouncedPersist = debounce(
     const dbOperations: Promise<unknown>[] = [];
 
     /* Positions: all nodes (all root-level now) */
-    const rootNodePositions: NodePosition[] = nodes.map((n) => ({
-      fileId: n.id,
-      x: n.position.x,
-      y: n.position.y,
-      tabId,
-    }));
+    const dims = useCanvasStore.getState().expandedFolderDims;
+    const rootNodePositions: NodePosition[] = nodes.map((n) => {
+      const fd = dims[n.id];
+      return {
+        fileId: n.id,
+        x: n.position.x,
+        y: n.position.y,
+        tabId,
+        ...(fd ? { width: fd.width, height: fd.height } : {}),
+      };
+    });
     console.log('[PERSIST] saving positions:', {
       scope: tabId,
       positionsCount: rootNodePositions.length,
@@ -296,14 +301,18 @@ const debouncedPersist = debounce(
     });
     dbOperations.push(db.positions.bulkPut(rootNodePositions));
 
-    /* Folder states (just expanded/not expanded, no dimensions/viewport) */
-    const fStates = Object.entries(expandedFolders).map(
-      ([folderId, isOpen]) => ({
-        folderId,
-        isOpen,
-        tabId,
-      }),
-    );
+    /* Folder states + dimensions (merged so bulkPut doesn't overwrite) */
+    const allFolderIds = new Set([
+      ...Object.keys(expandedFolders),
+      ...Object.keys(dims),
+    ]);
+    const fStates = Array.from(allFolderIds).map((folderId) => ({
+      folderId,
+      isOpen: expandedFolders[folderId] ?? false,
+      width: dims[folderId]?.width,
+      height: dims[folderId]?.height,
+      tabId,
+    }));
     if (fStates.length > 0) {
       dbOperations.push(db.folderState.bulkPut(fStates));
     }
@@ -460,6 +469,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         scope: currentScope,
         count: savedPositions.length,
       });
+
+      // Catch-up sync: push Dexie data to Firestore so next load
+      // from another device picks it up. Fire-and-forget.
+      if (user && savedPositions.length > 0) {
+        syncToFirestore(user.uid, savedPositions).catch((err) => {
+          console.warn('[HYDRATE] catch-up sync to Firestore failed (non-fatal):', err);
+        });
+      }
     }
 
     const [savedEdges, savedFolderStates] = await Promise.all([
@@ -476,10 +493,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       savedPositions.map((p) => [p.fileId, { x: p.x, y: p.y }]),
     );
 
-    /* 1. Compile folder expand state from Dexie (simplified — just open/closed) */
+    /* 1. Compile folder expand state + dimensions from Dexie */
     const expandedFolders: Record<string, boolean> = {};
+    const expandedFolderDims: Record<string, { width: number; height: number }> = {};
     for (const fs of savedFolderStates) {
       expandedFolders[fs.folderId] = fs.isOpen;
+      if (fs.width != null && fs.height != null) {
+        expandedFolderDims[fs.folderId] = { width: fs.width, height: fs.height };
+      }
     }
 
     /* 2. Apply saved positions to all nodes (all root-level now) */
@@ -504,6 +525,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       edges,
       layout: 'free',
       expandedFolders,
+      expandedFolderDims,
     });
 
     console.log('[HYDRATE] complete — nodes:', get().nodes.length, 'expanded:', Object.keys(expandedFolders).length);
@@ -536,26 +558,34 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   /* ── persistent save (immediate, not debounced) ───────────── */
 
   persistNow: async () => {
-    const { nodes, edges, expandedFolders, activeTabId, currentFolderId } = get();
+    const { nodes, edges, expandedFolders, expandedFolderDims, activeTabId, currentFolderId } = get();
     const scope = persistenceScope(activeTabId, currentFolderId);
 
     const dbOps: Promise<unknown>[] = [];
 
-    const allNodePositions: NodePosition[] = nodes.map((n) => ({
-      fileId: n.id,
-      x: n.position.x,
-      y: n.position.y,
-      tabId: scope,
-    }));
+    const allNodePositions: NodePosition[] = nodes.map((n) => {
+      const fd = expandedFolderDims[n.id];
+      return {
+        fileId: n.id,
+        x: n.position.x,
+        y: n.position.y,
+        tabId: scope,
+        ...(fd ? { width: fd.width, height: fd.height } : {}),
+      };
+    });
     dbOps.push(db.positions.bulkPut(allNodePositions));
 
-    const fStates = Object.entries(expandedFolders).map(
-      ([folderId, isOpen]) => ({
-        folderId,
-        isOpen,
-        tabId: scope,
-      }),
-    );
+    const allFolderIds = new Set([
+      ...Object.keys(expandedFolders),
+      ...Object.keys(expandedFolderDims),
+    ]);
+    const fStates = Array.from(allFolderIds).map((folderId) => ({
+      folderId,
+      isOpen: expandedFolders[folderId] ?? false,
+      width: expandedFolderDims[folderId]?.width,
+      height: expandedFolderDims[folderId]?.height,
+      tabId: scope,
+    }));
     if (fStates.length > 0) {
       dbOps.push(db.folderState.bulkPut(fStates));
     }
@@ -632,7 +662,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       });
     }
 
-    set({ expandedFolders: {} });
+    set({ expandedFolders: {}, expandedFolderDims: {} });
 
     get().applyGridLayout();
   },
@@ -1422,8 +1452,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
       // Clean up expanded state for removed folders
       const updatedExpanded = { ...currentState.expandedFolders };
+      const updatedDims = { ...currentState.expandedFolderDims };
       for (const id of toRemove) {
         delete updatedExpanded[id];
+        delete updatedDims[id];
       }
 
       const remainingRemoving = currentState.removingNodeIds.filter(
@@ -1434,6 +1466,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         nodes: updatedNodes,
         allItems: updatedItems,
         expandedFolders: updatedExpanded,
+        expandedFolderDims: updatedDims,
         removingNodeIds: remainingRemoving,
       });
 
