@@ -650,9 +650,24 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         nodes: updatedNodes,
       });
     } else {
-      // OPEN: mark as expanded (all nodes stay root-level, Canvas filters visibility)
+      // OPEN: mark as expanded (all nodes stay root-level, Canvas
+      // filters visibility). Move children to the end of the nodes
+      // array so they render on top of the folder (ReactFlow z-index
+      // = DOM order when nodes share the same z-index value).
+      const { nodes, allItems } = get();
+      const childIds = allItems
+        .filter((item) => item.parentId === folderId)
+        .map((item) => item.id);
+      let reorderedNodes = nodes;
+      if (childIds.length > 0) {
+        const childSet = new Set(childIds);
+        const otherNodes = nodes.filter((n) => !childSet.has(n.id));
+        const childNodes = nodes.filter((n) => childSet.has(n.id));
+        reorderedNodes = [...otherNodes, ...childNodes];
+      }
       set({
         expandedFolders: { ...expandedFolders, [folderId]: true },
+        nodes: reorderedNodes,
       });
 
       // Sync con Google Drive al expandir carpeta
