@@ -28,6 +28,7 @@ import { useToastStore } from '../stores/toastStore';
 import { useNavigationStore } from '../stores/navigationStore';
 import { useRootStore } from '../stores/rootStore';
 import { createItem, CREATE_MIME_TYPES } from '../services/drive';
+import { uploadFile, isFileTooLarge, MAX_UPLOAD_SIZE } from '../services/upload';
 import ConfirmModal from './ConfirmModal';
 import { isInsideFolder } from '../utils/folderBounds';
 
@@ -60,6 +61,11 @@ function Flow() {
   const storeOnNodeDrag = useCanvasStore((s) => s.onNodeDrag);
   const storeOnNodeDragStop = useCanvasStore((s) => s.onNodeDragStop);
   const persistNow = useCanvasStore((s) => s.persistNow);
+  const isUploading = useCanvasStore((s) => s.isUploading);
+  const uploadProgress = useCanvasStore((s) => s.uploadProgress);
+  const setUploadProgress = useCanvasStore((s) => s.setUploadProgress);
+  const clearUploadState = useCanvasStore((s) => s.clearUploadState);
+
   const { fitView } = useReactFlow();
   const { getIntersectingNodes } = useReactFlow();
   const logout = useAuthStore((s) => s.logout);
@@ -74,6 +80,10 @@ function Flow() {
     window.addEventListener('beforeunload', onBeforeUnload);
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [persistNow]);
+
+  /* ── File drag & drop state ──────────────────────────────────── */
+  const [isFileDragOver, setIsFileDragOver] = useState(false);
+  const fileDragCountRef = useRef(0);
 
   /* ── Multi-selection drag state (track origins of all selected nodes) ── */
   const multiDragOriginsRef = useRef<Record<string, { x: number; y: number }>>({});
@@ -285,16 +295,96 @@ function Flow() {
     event.preventDefault();
     event.dataTransfer.dropEffect = 'copy';
     event.currentTarget.classList.add('drag-over');
+
+    const hasFiles = Array.from(event.dataTransfer.types).includes('Files');
+    if (hasFiles) {
+      fileDragCountRef.current += 1;
+      setIsFileDragOver(true);
+    }
+  }, []);
+
+  const onDragEnter = useCallback((event: React.DragEvent) => {
+    event.preventDefault();
+    const hasFiles = Array.from(event.dataTransfer.types).includes('Files');
+    if (hasFiles) {
+      fileDragCountRef.current += 1;
+      setIsFileDragOver(true);
+    }
   }, []);
 
   const onDragLeave = useCallback((event: React.DragEvent) => {
     event.currentTarget.classList.remove('drag-over');
+    const hasFiles = Array.from(event.dataTransfer.types).includes('Files');
+    if (hasFiles) {
+      fileDragCountRef.current -= 1;
+      if (fileDragCountRef.current <= 0) {
+        fileDragCountRef.current = 0;
+        setIsFileDragOver(false);
+      }
+    }
   }, []);
+
+  const handleFileDrop = useCallback(
+    async (files: FileList, dropPosition: { x: number; y: number }) => {
+      const fileArray = Array.from(files);
+      const folderId = getParentFolderId();
+
+      for (const file of fileArray) {
+        if (isFileTooLarge(file)) {
+          useToastStore.getState().addToast({
+            type: 'warning',
+            message: `"${file.name}" supera los ${MAX_UPLOAD_SIZE / 1024 / 1024}MB. No se subió.`,
+            duration: 5000,
+          });
+          continue;
+        }
+
+        setUploadProgress(0);
+
+        try {
+          const uploaded = await uploadFile(file, folderId, (progress) => {
+            setUploadProgress(progress);
+          });
+
+          if (uploaded) {
+            addNewItem(uploaded, dropPosition);
+            useToastStore.getState().addToast({
+              type: 'success',
+              message: `"${file.name}" subido a Drive`,
+            });
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'Error al subir archivo';
+          useToastStore.getState().addToast({
+            type: 'error',
+            message,
+            duration: 5000,
+          });
+        }
+      }
+
+      clearUploadState();
+    },
+    [getParentFolderId, setUploadProgress, addNewItem, clearUploadState],
+  );
 
   const onDrop = useCallback(
     (event: React.DragEvent) => {
       event.preventDefault();
       event.currentTarget.classList.remove('drag-over');
+      setIsFileDragOver(false);
+      fileDragCountRef.current = 0;
+
+      const files = event.dataTransfer.files;
+      if (files.length > 0) {
+        const position = reactFlowInstance.screenToFlowPosition({
+          x: event.clientX,
+          y: event.clientY,
+        });
+        handleFileDrop(files, position);
+        return;
+      }
+
       const mimeType = event.dataTransfer.getData('application/karta-type');
       if (!mimeType) return;
 
@@ -316,7 +406,7 @@ function Flow() {
         position,
       });
     },
-    [reactFlowInstance, getParentFolderId],
+    [reactFlowInstance, getParentFolderId, handleFileDrop],
   );
 
   /** Handle CreateModal submission → call Drive API, add to canvas. */
@@ -544,6 +634,7 @@ function Flow() {
     <div
       className="w-full h-full relative"
       onDragOver={onDragOver}
+      onDragEnter={onDragEnter}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
@@ -600,6 +691,30 @@ function Flow() {
           />
         )}
       </ReactFlow>
+
+      {/* ── File drag overlay ── */}
+      {isFileDragOver && (
+        <div className="absolute inset-0 z-40 pointer-events-none rounded-2xl border-2 border-dashed border-[#2563EB] bg-[#2563EB]/[0.04]" />
+      )}
+
+      {/* ── Upload progress bar ── */}
+      {isUploading && (
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-50 bg-white border border-[#E5E7EB] rounded-xl shadow-lg px-4 py-3 min-w-[200px] motion-safe:animate-fade-in-up">
+          <div className="flex items-center gap-3">
+            <svg className="animate-spin h-4 w-4 text-[#2563EB]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+            <span className="text-sm text-[#1F2937] whitespace-nowrap">Subiendo… {uploadProgress}%</span>
+          </div>
+          <div className="mt-2 w-full h-1 bg-[#E5E7EB] rounded-full overflow-hidden">
+            <div
+              className="h-full bg-[#2563EB] rounded-full transition-all duration-200 ease-out"
+              style={{ width: `${uploadProgress}%` }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* ── edge tooltip ── */}
       {hoveredEdge && hoverPos && (() => {

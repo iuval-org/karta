@@ -76,6 +76,7 @@ function toNodePosition(fp: FirestorePosition): NodePosition {
     fileId: fp.fileId,
     x: fp.x,
     y: fp.y,
+    zIndex: fp.zIndex,
     tabId: fp.tabId ?? '',
     ...(fp.width != null && fp.height != null
       ? { width: fp.width, height: fp.height }
@@ -112,7 +113,7 @@ export async function syncToFirestore(
         folderId: pos.tabId,
         x: pos.x,
         y: pos.y,
-        zIndex: 0,
+        zIndex: pos.zIndex ?? 0,
         tabId: pos.tabId,
         updatedAt: now,
       };

@@ -53,6 +53,16 @@ interface CanvasState {
   /** True mientras se está sincronizando con Google Drive. */
   isSyncing: boolean;
 
+  /** True mientras se está subiendo un archivo al canvas. */
+  isUploading: boolean;
+  /** Progreso de la subida actual (0-100). */
+  uploadProgress: number;
+
+  /** Actualiza el progreso de subida. */
+  setUploadProgress: (progress: number) => void;
+  /** Resetea el estado de subida. */
+  clearUploadState: () => void;
+
   /** Active Firestore onSnapshot subscription (cleanup on unmount/logout). */
   _firestoreUnsubscribe: Unsubscribe | null;
 
@@ -221,27 +231,31 @@ interface CanvasState {
   onNodeDragStop: (_event: unknown, node: Node) => void;
 
   /**
-   * Move a node to the front of the z-order (end of nodes array).
+   * Bring selected nodes to the front of the z-order (max zIndex + 1).
+   * If ids provided, use those instead of selectedNodeIds.
    */
-  bringToFront: (nodeId: string) => void;
+  bringToFront: (ids?: string[]) => void;
 
   /**
-   * Move a node to the back of the z-order (start of nodes array).
+   * Send selected nodes to the back of the z-order (min zIndex - 1).
+   * If ids provided, use those instead of selectedNodeIds.
    */
-  sendToBack: (nodeId: string) => void;
+  sendToBack: (ids?: string[]) => void;
+
+  /**
+   * Increment zIndex of selected nodes by 1.
+   * If ids provided, use those instead of selectedNodeIds.
+   */
+  bringForward: (ids?: string[]) => void;
+
+  /**
+   * Decrement zIndex of selected nodes by 1.
+   * If ids provided, use those instead of selectedNodeIds.
+   */
+  sendBackward: (ids?: string[]) => void;
 
   /** Directly set the nodes array (used during multi-selection drag). */
   setNodes: (nodes: Node<CanvasNodeData>[]) => void;
-
-  /**
-   * Batch: bring all selected nodes to front.
-   */
-  batchBringToFront: (nodeIds: string[]) => void;
-
-  /**
-   * Batch: send all selected nodes to back.
-   */
-  batchSendToBack: (nodeIds: string[]) => void;
 
   /**
    * Batch: create a new folder and move selected items into it.
@@ -299,6 +313,7 @@ const debouncedPersist = debounce(
         fileId: n.id,
         x: n.position.x,
         y: n.position.y,
+        zIndex: n.zIndex,
         tabId,
         ...(fd ? { width: fd.width, height: fd.height } : {}),
       };
@@ -378,6 +393,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   folderDragChildOrigins: {},
   panMode: typeof window !== 'undefined' && navigator.maxTouchPoints > 0,
   isSyncing: false,
+  isUploading: false,
+  uploadProgress: 0,
   _firestoreUnsubscribe: null,
 
   /* ── load ──────────────────────────────────────────────────── */
@@ -500,7 +517,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }
 
     const posMap = new Map(
-      savedPositions.map((p) => [p.fileId, { x: p.x, y: p.y }]),
+      savedPositions.map((p) => [p.fileId, { x: p.x, y: p.y, zIndex: p.zIndex }]),
     );
 
     /* 1. Compile folder expand state + dimensions from Dexie */
@@ -517,7 +534,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const updatedNodes: Node<CanvasNodeData>[] = get().nodes.map((n) => {
       const pos = posMap.get(n.id);
       if (pos) {
-        return { ...n, position: pos };
+        return { ...n, position: pos, zIndex: pos.zIndex ?? n.zIndex };
       }
       return n;
     });
@@ -545,21 +562,21 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       get().cleanupFirestoreSync(); // Clean up any previous subscription
       const unsub = onRemoteChange(user.uid, (remotePositions) => {
         const currentNodes = get().nodes;
-        const remotePosMap = new Map(
-          remotePositions.map((p) => [p.fileId, { x: p.x, y: p.y }]),
-        );
+      const remotePosMap = new Map(
+        remotePositions.map((p) => [p.fileId, { x: p.x, y: p.y, zIndex: p.zIndex }]),
+      );
 
-        const mergedNodes = currentNodes.map((n) => {
-          const pos = remotePosMap.get(n.id);
-          if (pos) {
-            return { ...n, position: pos };
-          }
-          return n;
-        });
+      const mergedNodes = currentNodes.map((n) => {
+        const pos = remotePosMap.get(n.id);
+        if (pos) {
+          return { ...n, position: pos, zIndex: pos.zIndex ?? n.zIndex };
+        }
+        return n;
+      });
 
-        set({ nodes: mergedNodes });
-        console.log('[HYDRATE] real-time update applied:', remotePositions.length, 'positions');
-      }, currentScope);
+      set({ nodes: mergedNodes });
+      console.log('[HYDRATE] real-time update applied:', remotePositions.length, 'positions');
+    }, currentScope);
 
       set({ _firestoreUnsubscribe: unsub });
     }
@@ -579,6 +596,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         fileId: n.id,
         x: n.position.x,
         y: n.position.y,
+        zIndex: n.zIndex,
         tabId: scope,
         ...(fd ? { width: fd.width, height: fd.height } : {}),
       };
@@ -932,6 +950,16 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         position: { x: n.position.x, y: n.position.y },
       })),
     });
+  },
+
+  /* ── Upload state ─────────────────────────────────────────── */
+
+  setUploadProgress: (progress: number) => {
+    set({ isUploading: true, uploadProgress: progress });
+  },
+
+  clearUploadState: () => {
+    set({ isUploading: false, uploadProgress: 0 });
   },
 
   /* ── Drag handlers ──────────────────────────────────────────── */
@@ -1683,82 +1711,60 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   /* ── Z-index (traer al frente / enviar atrás) ─────────────────── */
 
-  bringToFront: (nodeId: string) => {
-    const { nodes } = get();
-    const idx = nodes.findIndex((n) => n.id === nodeId);
-    if (idx === -1 || idx === nodes.length - 1) return;
-    const updated = [...nodes];
-    const [node] = updated.splice(idx, 1);
-    updated.push(node); // Al final = al frente
-
-    set({ nodes: updated });
-
-    debouncedPersist(
-      updated,
-      get().edges,
-      get().expandedFolders,
-      persistenceScope(get().activeTabId, get().currentFolderId),
-    );
+  bringToFront: (ids?: string[]) => {
+    const { nodes, selectedNodeIds } = get();
+    const targetIds = ids ?? selectedNodeIds;
+    if (targetIds.length === 0) return;
+    const maxZ = Math.max(...nodes.map((n) => n.zIndex ?? 0), 0);
+    const idSet = new Set(targetIds);
+    set({
+      nodes: nodes.map((n) =>
+        idSet.has(n.id) ? { ...n, zIndex: maxZ + 1 } : n,
+      ),
+    });
   },
 
-  sendToBack: (nodeId: string) => {
-    const { nodes } = get();
-    const idx = nodes.findIndex((n) => n.id === nodeId);
-    if (idx === -1 || idx === 0) return;
-    const updated = [...nodes];
-    const [node] = updated.splice(idx, 1);
-    updated.unshift(node); // Al inicio = atrás
+  sendToBack: (ids?: string[]) => {
+    const { nodes, selectedNodeIds } = get();
+    const targetIds = ids ?? selectedNodeIds;
+    if (targetIds.length === 0) return;
+    const minZ = Math.min(...nodes.map((n) => n.zIndex ?? 0), 0);
+    const idSet = new Set(targetIds);
+    set({
+      nodes: nodes.map((n) =>
+        idSet.has(n.id) ? { ...n, zIndex: minZ - 1 } : n,
+      ),
+    });
+  },
 
-    set({ nodes: updated });
+  bringForward: (ids?: string[]) => {
+    const { nodes, selectedNodeIds } = get();
+    const targetIds = ids ?? selectedNodeIds;
+    if (targetIds.length === 0) return;
+    const idSet = new Set(targetIds);
+    set({
+      nodes: nodes.map((n) =>
+        idSet.has(n.id) ? { ...n, zIndex: (n.zIndex ?? 0) + 1 } : n,
+      ),
+    });
+  },
 
-    debouncedPersist(
-      updated,
-      get().edges,
-      get().expandedFolders,
-      persistenceScope(get().activeTabId, get().currentFolderId),
-    );
+  sendBackward: (ids?: string[]) => {
+    const { nodes, selectedNodeIds } = get();
+    const targetIds = ids ?? selectedNodeIds;
+    if (targetIds.length === 0) return;
+    const idSet = new Set(targetIds);
+    set({
+      nodes: nodes.map((n) =>
+        idSet.has(n.id) ? { ...n, zIndex: (n.zIndex ?? 0) - 1 } : n,
+      ),
+    });
   },
 
   /* ── Direct setNodes (for multi-selection drag) ────────────────── */
 
   setNodes: (nodes: Node<CanvasNodeData>[]) => {
     set({ nodes });
-  },
-
-  /* ── Batch z-index operations ─────────────────────────────────── */
-
-  batchBringToFront: (nodeIds: string[]) => {
-    const { nodes } = get();
-    const idSet = new Set(nodeIds);
-    const selected = nodes.filter((n) => idSet.has(n.id));
-    const rest = nodes.filter((n) => !idSet.has(n.id));
-    const updated = [...rest, ...selected]; // selected at end = front
-
-    set({ nodes: updated });
-
-    debouncedPersist(
-      updated,
-      get().edges,
-      get().expandedFolders,
-      persistenceScope(get().activeTabId, get().currentFolderId),
-    );
-  },
-
-  batchSendToBack: (nodeIds: string[]) => {
-    const { nodes } = get();
-    const idSet = new Set(nodeIds);
-    const selected = nodes.filter((n) => idSet.has(n.id));
-    const rest = nodes.filter((n) => !idSet.has(n.id));
-    const updated = [...selected, ...rest]; // selected at start = back
-
-    set({ nodes: updated });
-
-    debouncedPersist(
-      updated,
-      get().edges,
-      get().expandedFolders,
-      persistenceScope(get().activeTabId, get().currentFolderId),
-    );
   },
 
   /* ── Group in folder (creates folder, moves items into it) ────── */

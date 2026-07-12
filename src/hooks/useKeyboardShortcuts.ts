@@ -114,6 +114,18 @@ export function useKeyboardShortcuts() {
           return;
         }
 
+        case ']': {
+          e.preventDefault();
+          useCanvasStore.getState().bringToFront();
+          return;
+        }
+
+        case '[': {
+          e.preventDefault();
+          useCanvasStore.getState().sendToBack();
+          return;
+        }
+
         /* ═══════════════════════════════════════════════════════
            Archivos
            ═══════════════════════════════════════════════════════ */

@@ -262,14 +262,22 @@ function FileNode({ id, data, selected }: NodeProps) {
   }, [clearSelection, closeCtx]);
 
   const handleBatchBringToFront = useCallback(() => {
-    const state = useCanvasStore.getState();
-    state.batchBringToFront(state.selectedNodeIds);
+    useCanvasStore.getState().bringToFront();
     closeCtx();
   }, [closeCtx]);
 
   const handleBatchSendToBack = useCallback(() => {
-    const state = useCanvasStore.getState();
-    state.batchSendToBack(state.selectedNodeIds);
+    useCanvasStore.getState().sendToBack();
+    closeCtx();
+  }, [closeCtx]);
+
+  const handleBatchBringForward = useCallback(() => {
+    useCanvasStore.getState().bringForward();
+    closeCtx();
+  }, [closeCtx]);
+
+  const handleBatchSendBackward = useCallback(() => {
+    useCanvasStore.getState().sendBackward();
     closeCtx();
   }, [closeCtx]);
 
@@ -520,9 +528,12 @@ function FileNode({ id, data, selected }: NodeProps) {
             Conectar con...
           </button>
           <div className="border-t border-gray-100 my-1" />
+          <div className="px-3 py-1 text-xs font-semibold text-gray-400 uppercase tracking-wider">
+            Orden
+          </div>
           <button
             onClick={() => {
-              useCanvasStore.getState().bringToFront(id);
+              useCanvasStore.getState().bringToFront([id]);
               closeCtx();
             }}
             className="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 active:scale-[0.97]"
@@ -534,13 +545,37 @@ function FileNode({ id, data, selected }: NodeProps) {
           </button>
           <button
             onClick={() => {
-              useCanvasStore.getState().sendToBack(id);
+              useCanvasStore.getState().sendToBack([id]);
               closeCtx();
             }}
             className="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 active:scale-[0.97]"
           >
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="16" height="16" className="shrink-0 text-gray-400">
               <path fillRule="evenodd" d="M14.77 18a4.23 4.23 0 004.23-4.23V6.5A2.5 2.5 0 0016.5 4H15V2.75a.75.75 0 00-1.28-.53l-3.33 3.33a.75.75 0 000 1.06l3.33 3.33a.75.75 0 001.28-.53V7.5h1.5a1 1 0 011 1v6.27a2.73 2.73 0 01-2.73 2.73H3.5a1 1 0 01-1-1V10.23A2.73 2.73 0 015.23 7.5H7a.75.75 0 000-1.5H5.23A4.23 4.23 0 001 10.23v5.27A2.5 2.5 0 003.5 18h11.27z" clipRule="evenodd" />
+            </svg>
+            Enviar atrás
+          </button>
+          <button
+            onClick={() => {
+              useCanvasStore.getState().bringForward([id]);
+              closeCtx();
+            }}
+            className="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 active:scale-[0.97]"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="16" height="16" className="shrink-0 text-gray-400">
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.22-9.22a.75.75 0 00-1.06-1.06l-1.97 1.97V5.75a.75.75 0 00-1.5 0v3.94l-1.97-1.97a.75.75 0 10-1.06 1.06l3.25 3.25a.75.75 0 001.06 0l3.25-3.25z" clipRule="evenodd" />
+            </svg>
+            Traer adelante
+          </button>
+          <button
+            onClick={() => {
+              useCanvasStore.getState().sendBackward([id]);
+              closeCtx();
+            }}
+            className="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 active:scale-[0.97]"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="16" height="16" className="shrink-0 text-gray-400">
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-3.22-8.78a.75.75 0 011.06-1.06l1.97 1.97V5.75a.75.75 0 011.5 0v3.94l1.97-1.97a.75.75 0 111.06 1.06l-3.25 3.25a.75.75 0 01-1.06 0L6.78 9.22z" clipRule="evenodd" />
             </svg>
             Enviar atrás
           </button>
@@ -597,6 +632,9 @@ function FileNode({ id, data, selected }: NodeProps) {
             Agrupar en carpeta
           </button>
           <div className="border-t border-gray-100 my-1" />
+          <div className="px-3 py-1 text-xs font-semibold text-gray-400 uppercase tracking-wider">
+            Orden
+          </div>
           <button
             onClick={handleBatchBringToFront}
             className="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 active:scale-[0.97]"
@@ -612,6 +650,24 @@ function FileNode({ id, data, selected }: NodeProps) {
           >
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="16" height="16" className="shrink-0 text-gray-400">
               <path fillRule="evenodd" d="M14.77 18a4.23 4.23 0 004.23-4.23V6.5A2.5 2.5 0 0016.5 4H15V2.75a.75.75 0 00-1.28-.53l-3.33 3.33a.75.75 0 000 1.06l3.33 3.33a.75.75 0 001.28-.53V7.5h1.5a1 1 0 011 1v6.27a2.73 2.73 0 01-2.73 2.73H3.5a1 1 0 01-1-1V10.23A2.73 2.73 0 015.23 7.5H7a.75.75 0 000-1.5H5.23A4.23 4.23 0 001 10.23v5.27A2.5 2.5 0 003.5 18h11.27z" clipRule="evenodd" />
+            </svg>
+            Enviar atrás
+          </button>
+          <button
+            onClick={handleBatchBringForward}
+            className="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 active:scale-[0.97]"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="16" height="16" className="shrink-0 text-gray-400">
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.22-9.22a.75.75 0 00-1.06-1.06l-1.97 1.97V5.75a.75.75 0 00-1.5 0v3.94l-1.97-1.97a.75.75 0 10-1.06 1.06l3.25 3.25a.75.75 0 001.06 0l3.25-3.25z" clipRule="evenodd" />
+            </svg>
+            Traer adelante
+          </button>
+          <button
+            onClick={handleBatchSendBackward}
+            className="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 active:scale-[0.97]"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="16" height="16" className="shrink-0 text-gray-400">
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-3.22-8.78a.75.75 0 011.06-1.06l1.97 1.97V5.75a.75.75 0 011.5 0v3.94l1.97-1.97a.75.75 0 111.06 1.06l-3.25 3.25a.75.75 0 01-1.06 0L6.78 9.22z" clipRule="evenodd" />
             </svg>
             Enviar atrás
           </button>

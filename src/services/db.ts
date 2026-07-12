@@ -11,6 +11,7 @@ export interface NodePosition {
   fileId: string; // PK
   x: number;
   y: number;
+  zIndex?: number;
   tabId: string; // 'root' o folderId
   width?: number;
   height?: number;
