@@ -334,6 +334,7 @@ function FileNode({ id, data, selected }: NodeProps) {
   return (
     <div
       className={`relative w-[180px] bg-white border rounded-xl shadow-sm motion-safe:transition-all select-none ${borderClass} ${opacityClass} ${removingClass}`}
+      onDoubleClick={openInDrive}
       onContextMenu={handleContextMenu}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
@@ -395,7 +396,7 @@ function FileNode({ id, data, selected }: NodeProps) {
           <p
             className="font-display font-bold text-sm text-gray-900 leading-tight truncate cursor-text"
             title={cleanName}
-            onDoubleClick={startRename}
+            onDoubleClick={(e) => { e.stopPropagation(); startRename(); }}
           >
             {displayName}
           </p>
