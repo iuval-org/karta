@@ -630,17 +630,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const currentlyOpen = expandedFolders[folderId] ?? false;
 
     if (currentlyOpen) {
-      // CLOSE: remove from expandedFolders and clear expanded dims so
-      // ReactFlow re-measures the now-collapsed node from the DOM.
-      // The mini‑map reads node.measured.width/height — if we don't
-      // strip the stale expanded dims it keeps showing the old size.
+      // CLOSE: remove from expandedFolders and strip expanded
+      // width/height/measured from the node so ReactFlow re-measures
+      // the now-collapsed node from the DOM. Keep expandedFolderDims
+      // intact so the saved expanded size persists across collapse/re-expand.
       const next = { ...expandedFolders };
       delete next[folderId];
 
-      const { expandedFolderDims: dims, nodes } = get();
-      const nextDims = { ...dims };
-      delete nextDims[folderId];
-
+      const { nodes } = get();
       const updatedNodes = nodes.map((n) => {
         if (n.id !== folderId) return n;
         // Remove stale width/height/measured so ReactFlow re-measures
@@ -650,7 +647,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
       set({
         expandedFolders: next,
-        expandedFolderDims: nextDims,
         nodes: updatedNodes,
       });
     } else {
