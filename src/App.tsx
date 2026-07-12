@@ -51,7 +51,16 @@ function AppContent() {
       loadTabs();
       hydrateSidebar();
       loadPreferences();
+      // Initialize Firestore real-time sync for multi-device position sync
+      useCanvasStore.getState().initFirestoreSync();
     }
+
+    // Clean up Firestore subscription on logout
+    return () => {
+      if (!useAuthStore.getState().user) {
+        useCanvasStore.getState().cleanupFirestoreSync();
+      }
+    };
   }, [user, hydrate, loadTabs, hydrateSidebar, loadPreferences]);
 
   useEffect(() => {

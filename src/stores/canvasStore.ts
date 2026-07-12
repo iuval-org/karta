@@ -26,6 +26,14 @@ import { useToastStore } from './toastStore';
 import { useRootStore } from './rootStore';
 import { findContainingFolder } from '../utils/folderBounds';
 import { operationQueue } from '../services/operationQueue';
+import {
+  syncToFirestore,
+  syncFromFirestore,
+  onRemoteChange,
+  removePositionsByScope,
+} from '../services/firestoreSync';
+import { useAuthStore } from './authStore';
+import type { Unsubscribe } from 'firebase/firestore';
 
 export interface CanvasNodeData {
   driveItem: DriveItem;
@@ -84,6 +92,14 @@ interface CanvasState {
 
   /** Pan mode: when true, drag moves the canvas (pan) instead of selecting. */
   panMode: boolean;
+
+  /** Active Firestore onSnapshot subscription (cleanup on unmount/logout). */
+  _firestoreUnsubscribe: Unsubscribe | null;
+
+  /** Initialize Firestore real-time sync subscription. */
+  initFirestoreSync: () => void;
+  /** Clean up Firestore real-time sync subscription. */
+  cleanupFirestoreSync: () => void;
   /** Enable or disable pan mode. */
   setPanMode: (enabled: boolean) => void;
   /** Toggle pan mode on/off. */
@@ -275,6 +291,14 @@ const debouncedPersist = debounce(
 
     await Promise.all(dbOperations);
     console.log('[PERSIST] save completed');
+
+    // ── Sync to Firestore (background, non-blocking) ─────────────
+    const user = useAuthStore.getState().user;
+    if (user) {
+      syncToFirestore(user.uid, rootNodePositions).catch((err) => {
+        console.warn('[PERSIST] Firestore sync error (non-fatal):', err);
+      });
+    }
   },
   500,
 );
@@ -303,6 +327,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   folderDragOrigins: {},
   folderDragChildren: {},
   panMode: typeof window !== 'undefined' && navigator.maxTouchPoints > 0,
+  _firestoreUnsubscribe: null,
 
   /* ── load ──────────────────────────────────────────────────── */
 
@@ -378,7 +403,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }
   },
 
-  /* ── Dexie hydration ──────────────────────────────────────── */
+  /* ── Hydration: Firestore first, Dexie fallback ──────────── */
 
   hydrateFromDexie: async (scope?: string) => {
     const { allItems, activeTabId, currentFolderId } = get();
@@ -386,14 +411,29 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
     const currentScope = scope ?? persistenceScope(activeTabId, currentFolderId);
 
-    const [savedPositions, savedEdges, savedFolderStates] = await Promise.all([
-      db.positions.filter(p => p.tabId === currentScope).toArray(),
+    // ── Try Firestore first ──────────────────────────────────
+    const user = useAuthStore.getState().user;
+    let savedPositions = await syncFromFirestore(user?.uid ?? '', currentScope);
+
+    // If Firestore has positions, log and use them
+    if (savedPositions.length > 0) {
+      console.log('[HYDRATE] loaded from Firestore:', {
+        scope: currentScope,
+        count: savedPositions.length,
+      });
+    } else {
+      // ── Fallback: Dexie ────────────────────────────────────
+      savedPositions = await db.positions.filter(p => p.tabId === currentScope).toArray();
+      console.log('[HYDRATE] loaded from Dexie (Firestore empty/unavailable):', {
+        scope: currentScope,
+        count: savedPositions.length,
+      });
+    }
+
+    const [savedEdges, savedFolderStates] = await Promise.all([
       db.edges.filter(e => e.tabId === currentScope).toArray(),
       db.folderState.filter(fs => fs.tabId === currentScope).toArray(),
     ]);
-
-    console.log('[HYDRATE] checking scope:', currentScope);
-    console.log('[HYDRATE] savedPositions found:', savedPositions.length);
 
     // If no persisted data, keep grid layout
     if (savedPositions.length === 0 && savedFolderStates.length === 0) {
@@ -435,6 +475,30 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     });
 
     console.log('[HYDRATE] complete — nodes:', get().nodes.length, 'expanded:', Object.keys(expandedFolders).length);
+
+    // ── Subscribe to real-time Firestore changes ─────────────
+    if (user) {
+      get().cleanupFirestoreSync(); // Clean up any previous subscription
+      const unsub = onRemoteChange(user.uid, (remotePositions) => {
+        const currentNodes = get().nodes;
+        const remotePosMap = new Map(
+          remotePositions.map((p) => [p.fileId, { x: p.x, y: p.y }]),
+        );
+
+        const mergedNodes = currentNodes.map((n) => {
+          const pos = remotePosMap.get(n.id);
+          if (pos) {
+            return { ...n, position: pos };
+          }
+          return n;
+        });
+
+        set({ nodes: mergedNodes });
+        console.log('[HYDRATE] real-time update applied:', remotePositions.length, 'positions');
+      }, currentScope);
+
+      set({ _firestoreUnsubscribe: unsub });
+    }
   },
 
   /* ── persistent save (immediate, not debounced) ───────────── */
@@ -476,6 +540,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }
 
     await Promise.all(dbOps);
+
+    // ── Sync to Firestore (background, non-blocking) ─────────────
+    const user = useAuthStore.getState().user;
+    if (user) {
+      syncToFirestore(user.uid, allNodePositions).catch((err) => {
+        console.warn('[persistNow] Firestore sync error (non-fatal):', err);
+      });
+    }
   },
 
   /* ── folder toggle ─────────────────────────────────────────── */
@@ -518,6 +590,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const scope = persistenceScope(activeTabId, currentFolderId);
     db.positions.filter(p => p.tabId === scope).delete();
     db.folderState.filter(fs => fs.tabId === scope).delete();
+
+    // Also remove from Firestore
+    const user = useAuthStore.getState().user;
+    if (user) {
+      removePositionsByScope(user.uid, scope).catch((err) => {
+        console.warn('[resetLayout] Firestore cleanup error:', err);
+      });
+    }
 
     set({ expandedFolders: {} });
 
@@ -1303,6 +1383,46 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         persistenceScope(stateAfterRemove.activeTabId, stateAfterRemove.currentFolderId),
       );
     }, 300);
+  },
+
+  /* ── Firestore sync lifecycle ─────────────────────────────── */
+
+  initFirestoreSync: () => {
+    const { activeTabId, currentFolderId, _firestoreUnsubscribe } = get();
+    if (_firestoreUnsubscribe) {
+      _firestoreUnsubscribe();
+    }
+
+    const user = useAuthStore.getState().user;
+    if (!user) return;
+
+    const scope = persistenceScope(activeTabId, currentFolderId);
+    const unsub = onRemoteChange(user.uid, (remotePositions) => {
+      const currentNodes = get().nodes;
+      const remotePosMap = new Map(
+        remotePositions.map((p) => [p.fileId, { x: p.x, y: p.y }]),
+      );
+
+      const mergedNodes = currentNodes.map((n) => {
+        const pos = remotePosMap.get(n.id);
+        if (pos) {
+          return { ...n, position: pos };
+        }
+        return n;
+      });
+
+      set({ nodes: mergedNodes });
+    }, scope);
+
+    set({ _firestoreUnsubscribe: unsub });
+  },
+
+  cleanupFirestoreSync: () => {
+    const { _firestoreUnsubscribe } = get();
+    if (_firestoreUnsubscribe) {
+      _firestoreUnsubscribe();
+      set({ _firestoreUnsubscribe: null });
+    }
   },
 
   /* ── Z-index (traer al frente / enviar atrás) ─────────────────── */
