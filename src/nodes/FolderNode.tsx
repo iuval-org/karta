@@ -64,6 +64,7 @@ function FolderNode({ id, data, selected }: NodeProps) {
   // the drag dims (preventing the overwrite fight).
   const isResizing = useRef(false);
   const resizeStart = useRef({ x: 0, y: 0, w: 0, h: 0 });
+  const resizeLastApplied = useRef({ w: 0, h: 0 });
   const resizeNodeId = useRef(id);
   resizeNodeId.current = id;
   const [resizeLive, setResizeLive] = useState<{ w: number; h: number } | null>(null);
@@ -78,6 +79,8 @@ function FolderNode({ id, data, selected }: NodeProps) {
     const rect = nodeEl.getBoundingClientRect();
     isResizing.current = true;
     resizeStart.current = { x: e.clientX, y: e.clientY, w: rect.width, h: rect.height };
+    // Track the last-applied size so we skip no-op updates
+    resizeLastApplied.current = { w: rect.width, h: rect.height };
   }, []);
 
   const handleResizePointerMove = useCallback((e: React.PointerEvent) => {
@@ -86,6 +89,11 @@ function FolderNode({ id, data, selected }: NodeProps) {
     const dy = e.clientY - resizeStart.current.y;
     const newW = Math.max(300, resizeStart.current.w + dx);
     const newH = Math.max(100, resizeStart.current.h + dy);
+    // Skip if dimensions haven't meaningfully changed (avoids
+    // size drift from tiny pointer moves on click).
+    const last = resizeLastApplied.current;
+    if (Math.abs(newW - last.w) < 2 && Math.abs(newH - last.h) < 2) return;
+    resizeLastApplied.current = { w: newW, h: newH };
     // Update local state (so React's style prop adopts the drag dims)
     // and keep direct DOM update for instant visual feedback.
     setResizeLive({ w: newW, h: newH });
@@ -103,12 +111,17 @@ function FolderNode({ id, data, selected }: NodeProps) {
     if (!isResizing.current) return;
     isResizing.current = false;
     (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+    // Only persist if dimensions actually changed (skip click-only).
+    const startW = resizeStart.current.w;
+    const startH = resizeStart.current.h;
     const finalDims = resizeLive ?? (rootElRef.current ? {
       w: rootElRef.current.getBoundingClientRect().width,
       h: rootElRef.current.getBoundingClientRect().height,
     } : { w: rfWidth, h: rfHeight });
     setResizeLive(null);
-    setExpandedFolderDims(resizeNodeId.current, finalDims.w, finalDims.h);
+    if (Math.abs(finalDims.w - startW) > 2 || Math.abs(finalDims.h - startH) > 2) {
+      setExpandedFolderDims(resizeNodeId.current, finalDims.w, finalDims.h);
+    }
   }, [setExpandedFolderDims, resizeLive, rfWidth, rfHeight]);
 
   /* ── Store selectors (simplified — no viewport/child positions) ── */
