@@ -937,33 +937,34 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             Math.abs(currentHeight - origin.height) > 3);
 
         if (!isResize && (Math.abs(dx) > 5 || Math.abs(dy) > 5)) {
-          const { nodes, expandedFolders } = get();
-          // Only move children if the folder is expanded (children are visible)
-          if (expandedFolders[node.id]) {
-            const childSet = new Set(childIds);
-            const updatedNodes = nodes.map((n) => {
-              if (childSet.has(n.id)) {
-                return {
-                  ...n,
-                  position: {
-                    x: n.position.x + dx,
-                    y: n.position.y + dy,
-                  },
-                };
-              }
-              return n;
-            });
-            set({ nodes: updatedNodes });
+          const { nodes } = get();
+          // Always move children by the drag delta so they keep their
+          // relative position — even when the folder is collapsed and
+          // children are hidden. Otherwise they stay behind and show up
+          // in the wrong spot when the folder is expanded later.
+          const childSet = new Set(childIds);
+          const updatedNodes = nodes.map((n) => {
+            if (childSet.has(n.id)) {
+              return {
+                ...n,
+                position: {
+                  x: n.position.x + dx,
+                  y: n.position.y + dy,
+                },
+              };
+            }
+            return n;
+          });
+          set({ nodes: updatedNodes });
 
-            // Persist after children repositioned
-            const newState = get();
-            debouncedPersist(
-              newState.nodes,
-              newState.edges,
-              newState.expandedFolders,
-              persistenceScope(newState.activeTabId, newState.currentFolderId),
-            );
-          }
+          // Persist after children repositioned
+          const newState = get();
+          debouncedPersist(
+            newState.nodes,
+            newState.edges,
+            newState.expandedFolders,
+            persistenceScope(newState.activeTabId, newState.currentFolderId),
+          );
         }
       }
 
