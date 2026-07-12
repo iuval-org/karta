@@ -81,7 +81,23 @@ function FolderNode({ id, data, selected }: NodeProps) {
     resizeStart.current = { x: e.clientX, y: e.clientY, w: rect.width, h: rect.height };
     // Track the last-applied size so we skip no-op updates
     resizeLastApplied.current = { w: rect.width, h: rect.height };
-  }, []);
+
+    // Re-assert children's zIndex so they stay on top of the folder
+    // during resize (ReactFlow may recalculate z-indices on dimension
+    // changes, dropping our explicit zIndex:2000).
+    const state = useCanvasStore.getState();
+    const childIds = state.allItems
+      .filter((item) => item.parentId === id)
+      .map((item) => item.id);
+    if (childIds.length > 0) {
+      const childSet = new Set(childIds);
+      state.setNodes(
+        state.nodes.map((n) =>
+          childSet.has(n.id) ? { ...n, zIndex: 2000 } as any : n,
+        ),
+      );
+    }
+  }, [id]);
 
   const handleResizePointerMove = useCallback((e: React.PointerEvent) => {
     if (!isResizing.current) return;
