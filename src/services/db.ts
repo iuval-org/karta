@@ -35,6 +35,21 @@ export interface StoredTab {
   order: number;
 }
 
+export interface SyncState {
+  id: 'sync'; // PK
+  pageToken: string;
+  lastSyncAt: number;
+}
+
+export interface StoredOperation {
+  id: string; // PK
+  type: string;
+  fileId: string;
+  payload: string; // JSON-stringified
+  priority: number;
+  createdAt: number;
+}
+
 /* ── Database class ────────────────────────────────────────────── */
 
 class KartaDatabase extends Dexie {
@@ -43,6 +58,8 @@ class KartaDatabase extends Dexie {
   edges!: Table<StoredEdge, string>;
   folderState!: Table<FolderStateRow, string>;
   tabs!: Table<StoredTab, string>;
+  syncState!: Table<SyncState, string>;
+  storedOperations!: Table<StoredOperation, string>;
 
   constructor() {
     super('KartaDatabase');
@@ -68,6 +85,27 @@ class KartaDatabase extends Dexie {
       edges: 'id, tabId',
       folderState: 'folderId, tabId',
       tabs: 'tabId',
+    });
+
+    // Version 4 – add syncState table for Drive Changes API tracking
+    this.version(4).stores({
+      positions: 'fileId, tabId',
+      settings: 'key',
+      edges: 'id, tabId',
+      folderState: 'folderId, tabId',
+      tabs: 'tabId',
+      syncState: 'id',
+    });
+
+    // Version 5 – add storedOperations table for queue persistence
+    this.version(5).stores({
+      positions: 'fileId, tabId',
+      settings: 'key',
+      edges: 'id, tabId',
+      folderState: 'folderId, tabId',
+      tabs: 'tabId',
+      syncState: 'id',
+      storedOperations: 'id',
     });
   }
 }

@@ -6,6 +6,7 @@ import { useCanvasStore } from './stores/canvasStore';
 import { useTabStore } from './stores/tabStore';
 import { useSidebarStore } from './stores/sidebarStore';
 import { usePreferencesStore } from './stores/preferencesStore';
+import { useNavigationStore } from './stores/navigationStore';
 import { initConnectivityListeners } from './stores/connectivityStore';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import AuthLayout from './layouts/AuthLayout';
@@ -58,6 +59,37 @@ function AppContent() {
       loadItems(rootFolderId);
     }
   }, [rootFolderId, initialized, loadItems, tabsHydrated]);
+
+  /* ── Dynamic document.title ───────────────────────────────── */
+  const navCurrentFolderId = useNavigationStore((s) => s.currentFolderId);
+  const navCurrentFolderName = useNavigationStore((s) => s.currentFolderName);
+  const navHistory = useNavigationStore((s) => s.history);
+
+  useEffect(() => {
+    if (!rootFolderId) {
+      document.title = 'Karta';
+      return;
+    }
+
+    if (!navCurrentFolderId) {
+      document.title = 'Karta';
+      return;
+    }
+
+    // Build path from history + current folder
+    const pathParts = navHistory.map((e) => e.folderName);
+    if (navCurrentFolderName) {
+      pathParts.push(navCurrentFolderName);
+    }
+
+    if (pathParts.length === 0) {
+      document.title = 'Karta';
+    } else if (pathParts.length === 1) {
+      document.title = `Karta — ${pathParts[0]}`;
+    } else {
+      document.title = `Karta — ${pathParts.join(' > ')}`;
+    }
+  }, [navCurrentFolderId, navCurrentFolderName, navHistory, rootFolderId]);
 
   const handleNewTab = useCallback(() => {
     const addTab = useTabStore.getState().addTab;

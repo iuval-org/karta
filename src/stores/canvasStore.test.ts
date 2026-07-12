@@ -44,6 +44,12 @@ vi.mock('../services/db', () => ({
     positions: { where: mockWhere, bulkPut: vi.fn().mockResolvedValue(undefined), clear: vi.fn() },
     edges: { where: mockWhere, bulkPut: vi.fn().mockResolvedValue(undefined), clear: vi.fn() },
     folderState: { where: mockWhere, bulkPut: vi.fn().mockResolvedValue(undefined), clear: vi.fn() },
+    storedOperations: {
+      toArray: vi.fn().mockResolvedValue([]),
+      put: vi.fn().mockResolvedValue(undefined),
+      bulkPut: vi.fn().mockResolvedValue(undefined),
+      clear: vi.fn().mockResolvedValue(undefined),
+    },
     settings: {
       get: vi.fn().mockResolvedValue(undefined),
       put: vi.fn().mockResolvedValue(undefined),
@@ -82,6 +88,19 @@ vi.mock('../utils/debounce', () => ({
     };
     return debounced;
   }),
+}));
+
+// Mock operationQueue
+const mockOpQueue = vi.hoisted(() => ({
+  push: vi.fn(() => Promise.resolve()),
+  resumeFromStorage: vi.fn(),
+  flushNow: vi.fn(),
+  clear: vi.fn(),
+  getQueued: vi.fn(() => [] as any[]),
+  size: 0,
+}));
+vi.mock('../services/operationQueue', () => ({
+  operationQueue: mockOpQueue,
 }));
 
 // Mock toastStore

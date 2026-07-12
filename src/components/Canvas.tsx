@@ -26,7 +26,8 @@ import { useAuthStore } from '../stores/authStore';
 import { useToastStore } from '../stores/toastStore';
 import { useNavigationStore } from '../stores/navigationStore';
 import { useRootStore } from '../stores/rootStore';
-import { createItem, CREATE_MIME_TYPES, trashItems } from '../services/drive';
+import Breadcrumb from './Breadcrumb';
+import { createItem, CREATE_MIME_TYPES } from '../services/drive';
 import ConfirmModal from './ConfirmModal';
 
 const nodeTypes = {
@@ -57,6 +58,7 @@ function Flow() {
   const storeOnNodeDragStart = useCanvasStore((s) => s.onNodeDragStart);
   const storeOnNodeDrag = useCanvasStore((s) => s.onNodeDrag);
   const storeOnNodeDragStop = useCanvasStore((s) => s.onNodeDragStop);
+  const isSyncing = useCanvasStore((s) => s.isSyncing);
   const { fitView } = useReactFlow();
   const { getIntersectingNodes } = useReactFlow();
   const logout = useAuthStore((s) => s.logout);
@@ -400,37 +402,29 @@ function Flow() {
 
     setIsTrashing(true);
     try {
-      const { success, failed } = await trashItems(ids);
+      // removeItems handles both local state cleanup and Drive API queue
+      removeItems(ids);
 
-      if (success.length > 0) {
-        removeItems(success);
+      const name =
+        ids.length === 1
+          ? useCanvasStore.getState().allItems.find((i) => i.id === ids[0])?.name
+          : undefined;
 
-        const refresh = useCanvasStore.getState().refreshCurrentFolder;
-        if (refresh) {
-          refresh().catch(() => {});
-        }
-      }
-
-      if (success.length === 1) {
-        const item = useCanvasStore.getState().allItems.find((i) => i.id === success[0]);
+      if (name) {
         useToastStore.getState().addToast({
           type: 'success',
-          message: item
-            ? `${item.name} movido a la papelera`
-            : 'Elemento movido a la papelera',
+          message: `${name} movido a la papelera`,
         });
-      } else if (success.length > 1) {
+      } else if (ids.length > 1) {
         useToastStore.getState().addToast({
           type: 'success',
-          message: `${success.length} archivos movidos a la papelera`,
+          message: `${ids.length} archivos movidos a la papelera`,
         });
       }
 
-      if (failed.length > 0) {
-        useToastStore.getState().addToast({
-          type: 'error',
-          message: `${failed.length} archivo(s) no se pudieron eliminar. Reintentá.`,
-        });
+      const refresh = useCanvasStore.getState().refreshCurrentFolder;
+      if (refresh) {
+        refresh().catch(() => {});
       }
     } catch (err) {
       console.error('[trash] Error:', err);
@@ -552,63 +546,81 @@ function Flow() {
 
   return (
     <div
-      className="w-full h-full relative"
+      className="w-full h-full relative flex flex-col"
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
-      <ReactFlow
-        nodes={visibleNodes}
-        edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onConnect={onConnect as OnConnect}
-        nodeTypes={nodeTypes}
-        defaultEdgeOptions={defaultEdgeOptions}
-        proOptions={{ hideAttribution: true }}
-        snapToGrid={prefs.snapToGrid}
-        snapGrid={[20, 20]}
-        minZoom={0.1}
-        maxZoom={2}
-        colorMode="light"
-        zoomOnScroll={true}
-        zoomOnDoubleClick={false}
-        panOnScroll={true}
-        panOnScrollMode={PanOnScrollMode.Free}
-        panActivationKeyCode=""
-        deleteKeyCode="Delete"
-        selectionOnDrag={false}
-        multiSelectionKeyCode="Shift"
-        panOnDrag={[1]}
-        onSelectionChange={(params: { nodes: Node[] }) => {
-          useCanvasStore.getState().setSelectedNodeIds(params.nodes.map((n) => n.id));
-        }}
-        onEdgeContextMenu={onEdgeContextMenu}
-        onEdgeMouseEnter={onEdgeMouseEnter}
-        onEdgeMouseMove={onEdgeMouseMove}
-        onEdgeMouseLeave={onEdgeMouseLeave}
-        onNodeContextMenu={onPaneContextMenu}
-        onPaneContextMenu={onPaneContextMenu}
-        connectionLineStyle={{ stroke: '#6366F1', strokeWidth: 2 }}
-        connectionLineType={ConnectionLineType.SmoothStep}
-        onNodeDragStart={onNodeDragStart}
-        onNodeDrag={onNodeDrag}
-        onNodeDragStop={onNodeDragStop}
-      >
-        {prefs.showBackground && <Background variant={BackgroundVariant.Dots} gap={20} size={1} />}
-        <Controls position="bottom-left" />
-        {prefs.showMinimap && (
-          <MiniMap
-            position="bottom-right"
-            nodeStrokeColor="#6366f1"
-            nodeColor={(n: Node) => {
-              if (n.type === 'folderNode') return '#dbeafe';
-              return '#ffffff';
-            }}
-            style={{ background: '#f9fafb' }}
-          />
-        )}
-      </ReactFlow>
+      {/* Breadcrumb bar above the canvas */}
+      <div className="shrink-0 px-3 py-1.5 bg-white border-b border-gray-200 z-10">
+        <Breadcrumb />
+      </div>
+
+      {/* Sync indicator */}
+      {isSyncing && (
+        <div className="absolute top-2 left-1/2 -translate-x-1/2 z-50 px-3 py-1 bg-indigo-600 text-white text-xs rounded-full shadow-lg flex items-center gap-1.5 motion-safe:animate-pulse pointer-events-none">
+          <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+          <span>Sincronizando...</span>
+        </div>
+      )}
+
+      <div className="flex-1 relative">
+        <ReactFlow
+          nodes={visibleNodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onConnect={onConnect as OnConnect}
+          nodeTypes={nodeTypes}
+          defaultEdgeOptions={defaultEdgeOptions}
+          proOptions={{ hideAttribution: true }}
+          snapToGrid={prefs.snapToGrid}
+          snapGrid={[20, 20]}
+          minZoom={0.1}
+          maxZoom={2}
+          colorMode="light"
+          zoomOnScroll={true}
+          zoomOnDoubleClick={false}
+          panOnScroll={true}
+          panOnScrollMode={PanOnScrollMode.Free}
+          panActivationKeyCode=""
+          deleteKeyCode="Delete"
+          selectionOnDrag={false}
+          multiSelectionKeyCode="Shift"
+          panOnDrag={[1]}
+          onSelectionChange={(params: { nodes: Node[] }) => {
+            useCanvasStore.getState().setSelectedNodeIds(params.nodes.map((n) => n.id));
+          }}
+          onEdgeContextMenu={onEdgeContextMenu}
+          onEdgeMouseEnter={onEdgeMouseEnter}
+          onEdgeMouseMove={onEdgeMouseMove}
+          onEdgeMouseLeave={onEdgeMouseLeave}
+          onNodeContextMenu={onPaneContextMenu}
+          onPaneContextMenu={onPaneContextMenu}
+          connectionLineStyle={{ stroke: '#6366F1', strokeWidth: 2 }}
+          connectionLineType={ConnectionLineType.SmoothStep}
+          onNodeDragStart={onNodeDragStart}
+          onNodeDrag={onNodeDrag}
+          onNodeDragStop={onNodeDragStop}
+        >
+          {prefs.showBackground && <Background variant={BackgroundVariant.Dots} gap={20} size={1} />}
+          <Controls position="bottom-left" />
+          {prefs.showMinimap && (
+            <MiniMap
+              position="bottom-right"
+              nodeStrokeColor="#6366f1"
+              nodeColor={(n: Node) => {
+                if (n.type === 'folderNode') return '#dbeafe';
+                return '#ffffff';
+              }}
+              style={{ background: '#f9fafb' }}
+            />
+          )}
+        </ReactFlow>
+      </div>
 
       {/* ── edge tooltip ── */}
       {hoveredEdge && hoverPos && (() => {

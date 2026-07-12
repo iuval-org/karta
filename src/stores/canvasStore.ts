@@ -25,6 +25,7 @@ import type { NodePosition, StoredEdge } from '../services/db';
 import { useToastStore } from './toastStore';
 import { useRootStore } from './rootStore';
 import { findContainingFolder } from '../utils/folderBounds';
+import { operationQueue } from '../services/operationQueue';
 
 export interface CanvasNodeData {
   driveItem: DriveItem;

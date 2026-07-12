@@ -1,6 +1,7 @@
-import { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { useSidebarStore } from '../stores/sidebarStore';
 import { useCanvasStore } from '../stores/canvasStore';
+import { useNavigationStore } from '../stores/navigationStore';
 import { useSearchStore } from '../stores/searchStore';
 import type { SearchResult } from '../stores/searchStore';
 import { debounce } from '../utils/debounce';
@@ -110,6 +111,132 @@ export default function Sidebar({
     if (allItems.length === 0) return 0;
     return Math.min(Math.round((nodes.length / Math.max(allItems.length, 1)) * 100), 100);
   }, [allItems, nodes]);
+
+  /* ── Folder tree state ─────────────────────────────────────── */
+  const [expandedTreeFolders, setExpandedTreeFolders] = useState<Set<string>>(new Set());
+
+  const navigateToFolder = useNavigationStore((s) => s.navigateTo);
+  const navCurrentFolderId = useNavigationStore((s) => s.currentFolderId);
+  const currentFolderIdCanvas = useCanvasStore((s) => s.currentFolderId);
+  const loadItems = useCanvasStore((s) => s.loadItems);
+  const setCurrentFolderId = useCanvasStore((s) => s.setCurrentFolderId);
+
+  /** Build tree: all folders, organized by parentId */
+  const folderTree = useMemo(() => {
+    const folders = allItems.filter((i) => i.isFolder);
+    const rootFolderId = allItems[0]?.id ?? 'root';
+
+    const childrenOf = new Map<string, typeof folders>();
+    for (const f of folders) {
+      const parent = f.parentId || rootFolderId;
+      if (!childrenOf.has(parent)) childrenOf.set(parent, []);
+      childrenOf.get(parent)!.push(f);
+    }
+    // Sort by name
+    for (const [, kids] of childrenOf) {
+      kids.sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    return { childrenOf, rootFolderId };
+  }, [allItems]);
+
+  const toggleTreeFolder = useCallback((folderId: string) => {
+    setExpandedTreeFolders((prev) => {
+      const next = new Set(prev);
+      if (next.has(folderId)) {
+        next.delete(folderId);
+      } else {
+        next.add(folderId);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleNavigateToFolder = useCallback(
+    (folderId: string, folderName: string) => {
+      // Navigate via navigation store
+      navigateToFolder(folderId, folderName);
+      setCurrentFolderId(folderId);
+      loadItems(folderId);
+    },
+    [navigateToFolder, setCurrentFolderId, loadItems],
+  );
+
+  /** Recursively render folder tree nodes */
+  const renderTreeNodes = useCallback(
+    (parentId: string, depth: number): React.ReactNode[] => {
+      const { childrenOf } = folderTree;
+      const kids = childrenOf.get(parentId);
+      if (!kids || kids.length === 0) return [];
+
+      return kids.flatMap((folder) => {
+        const hasChildren = childrenOf.has(folder.id);
+        const isExpanded = expandedTreeFolders.has(folder.id);
+        const isCurrent = folder.id === currentFolderIdCanvas || folder.id === navCurrentFolderId;
+
+        return [
+          <div
+            key={folder.id}
+            className={[
+              'flex items-center gap-1 w-full pl-2 py-1 text-xs rounded-md motion-safe:transition-colors',
+              'cursor-pointer select-none',
+              isCurrent
+                ? 'bg-blue-100 text-blue-800 font-semibold'
+                : 'text-gray-700 hover:bg-gray-100',
+            ].join(' ')}
+            style={{ paddingLeft: `${8 + depth * 16}px` }}
+            onClick={() => handleNavigateToFolder(folder.id, folder.name)}
+            title={folder.name}
+          >
+            {/* Expand/collapse arrow */}
+            {hasChildren ? (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleTreeFolder(folder.id);
+                }}
+                className="shrink-0 w-4 h-4 flex items-center justify-center text-gray-400 hover:text-gray-600 rounded"
+                aria-label={isExpanded ? 'Colapsar' : 'Expandir'}
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 20 20"
+                  fill="currentColor"
+                  width="12"
+                  height="12"
+                  className={`motion-safe:transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+                >
+                  <path fillRule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clipRule="evenodd" />
+                </svg>
+              </button>
+            ) : (
+              <span className="shrink-0 w-4" />
+            )}
+
+            {/* Folder icon */}
+            <span
+              className={`shrink-0 ${isCurrent ? 'text-blue-600' : 'text-amber-500'}`}
+              dangerouslySetInnerHTML={{
+                __html: isExpanded ? FOLDER_OPEN_ICON : FOLDER_ICON,
+              }}
+            />
+
+            {/* Folder name */}
+            <span className="truncate flex-1">{folder.name}</span>
+          </div>,
+          ...(isExpanded ? renderTreeNodes(folder.id, depth + 1) : []),
+        ];
+      });
+    },
+    [
+      folderTree,
+      expandedTreeFolders,
+      currentFolderIdCanvas,
+      navCurrentFolderId,
+      handleNavigateToFolder,
+      toggleTreeFolder,
+    ],
+  );
 
   /* ── debounced local search ──────────────────────────────── */
   const debouncedSearchRef = useRef(
@@ -311,9 +438,21 @@ export default function Sidebar({
                 <h3 className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1.5 px-1">
                   Carpetas
                 </h3>
+                {/* Root folder */}
                 <button
-                  className="flex items-center gap-2 w-full px-2 py-1.5 text-xs text-gray-700 hover:bg-gray-100 rounded-md cursor-pointer motion-safe:transition-colors text-left"
-                  title="Carpeta raíz actual"
+                  onClick={() => {
+                    navigateToFolder('', '');
+                    setCurrentFolderId('');
+                    const rootId = allItems[0]?.id || 'root';
+                    loadItems(rootId);
+                  }}
+                  className={[
+                    'flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded-md motion-safe:transition-colors cursor-pointer text-left',
+                    (!navCurrentFolderId && !currentFolderIdCanvas)
+                      ? 'bg-blue-100 text-blue-800 font-semibold'
+                      : 'text-gray-700 hover:bg-gray-100',
+                  ].join(' ')}
+                  title="Carpeta raíz"
                 >
                   <span
                     className="shrink-0 text-blue-500"
@@ -321,6 +460,8 @@ export default function Sidebar({
                   />
                   <span className="truncate font-body">{rootFolderName || 'Raíz'}</span>
                 </button>
+                {/* Folder tree (children of root) */}
+                {renderTreeNodes(folderTree.rootFolderId, 0)}
               </section>
 
               {/* ── Acciones ──────────────────────────────────── */}

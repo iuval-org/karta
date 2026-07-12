@@ -30,10 +30,43 @@ interface Window {
             body: Record<string, unknown>,
           ): Promise<{ result: GapiDriveFile }>;
         };
+        changes: {
+          getStartPageToken(
+            params: Record<string, string>,
+          ): Promise<{ result: GapiDriveStartPageToken }>;
+          list(
+            params: Record<string, string>,
+          ): Promise<{ result: GapiDriveChangeList }>;
+        };
       };
     };
   };
 }
+
+// ── Drive Changes API ────────────────────────────────────────────
+
+interface GapiDriveChange {
+  kind?: string;
+  type?: string;
+  fileId?: string;
+  removed?: boolean;
+  time?: string;
+  file?: GapiDriveFile;
+}
+
+interface GapiDriveChangeList {
+  changes: GapiDriveChange[];
+  nextPageToken?: string;
+  newStartPageToken?: string;
+  kind?: string;
+}
+
+interface GapiDriveStartPageToken {
+  kind?: string;
+  startPageToken?: string;
+}
+
+// ── Drive file types ────────────────────────────────────────────
 
 interface GapiDriveFile {
   id?: string;
@@ -46,6 +79,7 @@ interface GapiDriveFile {
   size?: string;
   fileExtension?: string;
   parents?: string[];
+  trashed?: boolean;
 }
 
 interface GapiDriveFileList {

@@ -802,3 +802,85 @@ export async function renameItems(
 
   return { success, failed };
 }
+
+// ---------------------------------------------------------------------------
+// Drive Changes API
+// ---------------------------------------------------------------------------
+
+/**
+ * Obtiene el startPageToken inicial para el Changes API.
+ * Este token representa el estado actual de Drive y sirve como punto de
+ * partida para detectar cambios posteriores.
+ *
+ * GET https://www.googleapis.com/drive/v3/changes/startPageToken
+ */
+export async function getStartPageToken(): Promise<string> {
+  await ensureApiReady();
+
+  const response = await withRetry(async () => {
+    const client = window.gapi.client;
+    if (!client?.drive) {
+      throw new Error('Drive API no está cargada.');
+    }
+    return client.drive.changes.getStartPageToken({});
+  });
+
+  const token = (response.result as unknown as GapiDriveStartPageToken).startPageToken;
+  if (!token) {
+    throw new Error('No se pudo obtener el token de cambios de Drive.');
+  }
+  return token;
+}
+
+/**
+ * Lista los cambios desde un pageToken.
+ *
+ * GET https://www.googleapis.com/drive/v3/changes?pageToken={token}
+ *
+ * Incluye archivos trashed (trashed=true) para detectar eliminaciones.
+ * Maneja paginación automática si hay 100+ cambios.
+ *
+ * Retorna:
+ *   - changes: array de cambios individuales
+ *   - nextStartPageToken: nuevo token para la próxima sync (si hay)
+ */
+export async function getChanges(
+  pageToken: string,
+): Promise<{ changes: GapiDriveChange[]; nextStartPageToken?: string }> {
+  await ensureApiReady();
+
+  const allChanges: GapiDriveChange[] = [];
+  let currentToken: string | undefined = pageToken;
+  let newStartPageToken: string | undefined;
+
+  while (currentToken) {
+    const response = await withRetry(async () => {
+      const client = window.gapi.client;
+      if (!client?.drive) {
+        throw new Error('Drive API no está cargada.');
+      }
+      return client.drive.changes.list({
+        pageToken: currentToken!,
+        spaces: 'drive',
+        pageSize: '100',
+        includeRemoved: 'true',
+        includeItemsFromAllDrives: 'false',
+        supportsAllDrives: 'false',
+        fields: 'changes(kind,type,fileId,removed,time,file(id,name,mimeType,parents,trashed,modifiedTime,thumbnailLink,iconLink,webViewLink,size,fileExtension)),nextPageToken,newStartPageToken',
+      });
+    });
+
+    const data = response.result as unknown as GapiDriveChangeList;
+    if (data.changes) {
+      allChanges.push(...data.changes);
+    }
+
+    newStartPageToken = data.newStartPageToken;
+    currentToken = data.nextPageToken;
+  }
+
+  return {
+    changes: allChanges,
+    nextStartPageToken: newStartPageToken,
+  };
+}
