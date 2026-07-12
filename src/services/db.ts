@@ -25,12 +25,7 @@ export interface StoredEdge {
 export interface FolderStateRow {
   folderId: string; // PK
   isOpen: boolean;
-  width: number;
-  height: number;
   tabId: string;
-  viewportPanX?: number;
-  viewportPanY?: number;
-  viewportZoom?: number;
 }
 
 export interface StoredTab {

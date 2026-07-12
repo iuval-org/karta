@@ -25,7 +25,7 @@ describe('Dexie database schema', () => {
       tabId: 'tab-test',
     };
     await db.positions.put(item);
-    const found = await db.positions.where('tabId').equals('tab-test').toArray();
+    const found = await db.positions.filter(p => p.tabId === 'tab-test').toArray();
     expect(found).toHaveLength(1);
     expect(found[0].fileId).toBe('f1');
   });
@@ -38,7 +38,7 @@ describe('Dexie database schema', () => {
       tabId: 'tab-test',
     };
     await db.edges.put(edge);
-    const found = await db.edges.where('tabId').equals('tab-test').toArray();
+    const found = await db.edges.filter(e => e.tabId === 'tab-test').toArray();
     expect(found).toHaveLength(1);
     expect(found[0].id).toBe('e1');
   });
@@ -52,7 +52,7 @@ describe('Dexie database schema', () => {
       tabId: 'tab-test',
     };
     await db.folderState.put(state);
-    const found = await db.folderState.where('tabId').equals('tab-test').toArray();
+    const found = await db.folderState.filter(fs => fs.tabId === 'tab-test').toArray();
     expect(found).toHaveLength(1);
     expect(found[0].folderId).toBe('folder1');
   });
@@ -76,10 +76,10 @@ describe('Dexie database schema', () => {
     await db.positions.put({ fileId: 'b', x: 10, y: 10, tabId: 'tab-1' } as NodePosition);
     await db.positions.put({ fileId: 'c', x: 20, y: 20, tabId: 'tab-2' } as NodePosition);
 
-    const tab1Positions = await db.positions.where('tabId').equals('tab-1').toArray();
+    const tab1Positions = await db.positions.filter(p => p.tabId === 'tab-1').toArray();
     expect(tab1Positions).toHaveLength(2);
 
-    const tab2Positions = await db.positions.where('tabId').equals('tab-2').toArray();
+    const tab2Positions = await db.positions.filter(p => p.tabId === 'tab-2').toArray();
     expect(tab2Positions).toHaveLength(1);
 
     // Clean up

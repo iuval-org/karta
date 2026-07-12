@@ -78,9 +78,9 @@ export const useTabStore = create<TabState>((set, get) => ({
     }
 
     // Clean up persisted data for this tab
-    db.positions.where('tabId').equals(tabId).delete();
-    db.edges.where('tabId').equals(tabId).delete();
-    db.folderState.where('tabId').equals(tabId).delete();
+    db.positions.filter(p => p.tabId === tabId).delete();
+    db.edges.filter(e => e.tabId === tabId).delete();
+    db.folderState.filter(fs => fs.tabId === tabId).delete();
 
     persistTabs();
   },

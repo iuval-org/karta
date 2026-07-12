@@ -28,6 +28,7 @@ const mockListChildren = vi.hoisted(() => vi.fn());
 const mockGetUseMock = vi.hoisted(() => vi.fn(() => true));
 vi.mock('../services/drive', () => ({
   listChildren: (folderId: string) => mockListChildren(folderId),
+  listAllChildren: (folderId: string) => mockListChildren(folderId),
   getUseMock: (...args: any[]) => mockGetUseMock(...args),
   moveItem: vi.fn(),
   renameItem: vi.fn(),
@@ -113,9 +114,7 @@ beforeEach(() => {
     isLoading: false,
     error: null,
     errorType: null,
-    folderOpenState: {},
-    folderDimensions: {},
-    folderChildPositions: {},
+    expandedFolders: {},
     layout: 'grid',
     currentFolderId: '',
     activeTabId: 'root',
@@ -263,26 +262,21 @@ describe('Canvas store — toggleFolder', () => {
     useCanvasStore.getState().toggleFolder('f1');
 
     const state = useCanvasStore.getState();
-    expect(state.folderOpenState['f1']).toBe(true);
+    expect(state.expandedFolders['f1']).toBe(true);
 
     // Close it
     useCanvasStore.getState().toggleFolder('f1');
-    expect(useCanvasStore.getState().folderOpenState['f1']).toBe(false);
+    expect(useCanvasStore.getState().expandedFolders['f1']).toBeUndefined();
   });
 
-  it('no-op si el folder no existe en los nodos', () => {
-    useCanvasStore.getState().toggleFolder('nonexistent');
-    expect(useCanvasStore.getState().folderOpenState['nonexistent']).toBeUndefined();
-  });
-
-  it('toggleFolder no-op si no hay children para abrir', async () => {
+  it('togglea incluso sin children (expandedFolders solo trackea qué está expandido)', async () => {
     await useCanvasStore.getState().loadItems('root');
 
     // Folder 'f2' (Referencias Visuales) has no children in MOCK_ITEMS
     useCanvasStore.getState().toggleFolder('f2');
 
-    // Should not be open since there are no children
-    expect(useCanvasStore.getState().folderOpenState['f2']).toBeUndefined();
+    // Now it always toggles — no child check
+    expect(useCanvasStore.getState().expandedFolders['f2']).toBe(true);
   });
 });
 

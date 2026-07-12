@@ -9,10 +9,11 @@ import {
 } from 'react';
 import {
   Handle,
-  Position,
   NodeResizer,
+  Position,
+  useNodeId,
+  useStore,
   type NodeProps,
-  type ResizeParams,
 } from '@xyflow/react';
 import type { CanvasNodeData } from '../stores/canvasStore';
 import { useCanvasStore } from '../stores/canvasStore';
@@ -43,14 +44,16 @@ const MENU_DOTS = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" f
 function FolderNode({ id, data, selected }: NodeProps) {
   const item = (data as unknown as CanvasNodeData).driveItem;
 
-  /* ── store selectors ────────────────────────────────────────── */
-  const isOpen = useCanvasStore((s) => s.folderOpenState[id] ?? false);
-  const folderDimensions = useCanvasStore((s) => s.folderDimensions[id]);
+  /* ── ReactFlow node dimensions ── */
+  const nodeId = useNodeId();
+  const rfNode = useStore((s) => s.nodeLookup.get(nodeId ?? id));
+  const rfWidth = rfNode?.measured?.width ?? rfNode?.width ?? 640;
+  const rfHeight = rfNode?.measured?.height ?? rfNode?.height ?? 320;
+
+  /* ── Store selectors (simplified — no viewport/child positions) ── */
+  const isExpanded = useCanvasStore((s) => s.expandedFolders[id] ?? false);
   const allItems = useCanvasStore((s) => s.allItems);
   const toggleFolder = useCanvasStore((s) => s.toggleFolder);
-  const updateFolderDimensions = useCanvasStore((s) => s.updateFolderDimensions);
-  const updateFolderViewport = useCanvasStore((s) => s.updateFolderViewport);
-  const folderViewportState = useCanvasStore((s) => s.folderViewportState[id]);
   const nodes = useCanvasStore((s) => s.nodes);
   const onConnect = useCanvasStore((s) => s.onConnect);
   const searchHighlightedNodeIds = useCanvasStore((s) => s.searchHighlightedNodeIds);
@@ -63,28 +66,20 @@ function FolderNode({ id, data, selected }: NodeProps) {
   const applyGridLayout = useCanvasStore((s) => s.applyGridLayout);
   const isMultiSelected = selected && selectedNodeIds.length > 1;
   const folderHoverTarget = useCanvasStore((s) => s.folderHoverTarget);
-  const isDragOver = folderHoverTarget === id && !isOpen;
+  const isDragOver = folderHoverTarget === id && !isExpanded;
 
-  /* ── Refs ───────────────────────────────────────────────────── */
+  /* ── Refs ── */
   const rootElRef = useRef<HTMLDivElement>(null);
-  const viewportRef = useRef<HTMLDivElement>(null);
-  const panState = useRef<{ x: number; y: number; startPanX: number; startPanY: number; isPanning: boolean }>({
-    x: 0, y: 0, startPanX: 0, startPanY: 0, isPanning: false,
-  });
 
-  /* ── Local viewport state ──────────────────────────────────── */
-  const [viewportPan, setViewportPan] = useState(() => ({ x: folderViewportState?.panX ?? 0, y: folderViewportState?.panY ?? 0 }));
-  const [viewportZoom, setViewportZoom] = useState(() => folderViewportState?.zoom ?? 1);
-
-  /* ── child count ────────────────────────────────────────────── */
+  /* ── child count ── */
   const childCount = useMemo(
     () => allItems.filter((i) => i.parentId === item.id).length,
     [allItems, item.id],
   );
 
-  /* ── Apply overflow:hidden to ReactFlow wrapper when open ──── */
+  /* ── Apply overflow:hidden to ReactFlow wrapper when open ── */
   useEffect(() => {
-    if (!isOpen || !rootElRef.current) return;
+    if (!isExpanded || !rootElRef.current) return;
 
     const wrapper = rootElRef.current.parentElement;
     if (!wrapper) return;
@@ -96,17 +91,9 @@ function FolderNode({ id, data, selected }: NodeProps) {
       wrapper.style.overflow = '';
       wrapper.style.position = '';
     };
-  }, [isOpen]);
+  }, [isExpanded]);
 
-  /* ── Persist viewport state ─────────────────────────────────── */
-  const persistViewport = useCallback(
-    (panX: number, panY: number, zoom: number) => {
-      updateFolderViewport(id, { panX, panY, zoom });
-    },
-    [id, updateFolderViewport],
-  );
-
-  /* ── handlers ───────────────────────────────────────────────── */
+  /* ── handlers ── */
 
   const handleDoubleClick = useCallback(() => {
     toggleFolder(id);
@@ -120,104 +107,13 @@ function FolderNode({ id, data, selected }: NodeProps) {
     [id, toggleFolder],
   );
 
-  const handleResize = useCallback(
-    (_: unknown, params: ResizeParams) => {
-      updateFolderDimensions(id, {
-        width: params.width,
-        height: params.height,
-      });
-    },
-    [id, updateFolderDimensions],
-  );
-
-  /* ── Internal viewport: pan ────────────────────────────────── */
-
-  const handleViewportMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      // Only pan on background (ignore drag on child nodes / interactive elements)
-      if (e.button !== 0) return;
-      const target = e.target as HTMLElement;
-      if (target.closest('.react-flow__node') || target.closest('button') || target.closest('[role="button"]')) return;
-
-      e.preventDefault();
-      panState.current = {
-        x: e.clientX,
-        y: e.clientY,
-        startPanX: viewportPan.x,
-        startPanY: viewportPan.y,
-        isPanning: true,
-      };
-
-      const onMove = (ev: globalThis.MouseEvent) => {
-        if (!panState.current.isPanning) return;
-        const dx = ev.clientX - panState.current.x;
-        const dy = ev.clientY - panState.current.y;
-        const newPanX = panState.current.startPanX + dx;
-        const newPanY = panState.current.startPanY + dy;
-        setViewportPan({ x: newPanX, y: newPanY });
-      };
-
-      const onUp = () => {
-        panState.current.isPanning = false;
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
-      };
-
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
-    },
-    [viewportPan],
-  );
-
-  /* ── Internal viewport: zoom (ctrl+scroll / cmd+scroll) ────── */
-
-  const handleViewportWheel = useCallback(
-    (e: React.WheelEvent) => {
-      if (!e.ctrlKey && !e.metaKey) return;
-      e.preventDefault();
-      e.stopPropagation();
-
-      const delta = -e.deltaY * 0.001;
-      const newZoom = Math.max(0.25, Math.min(3, viewportZoom + delta));
-
-      // Zoom around cursor position within the viewport
-      const rect = viewportRef.current?.getBoundingClientRect();
-      if (!rect) return;
-
-      const cursorX = e.clientX - rect.left;
-      const cursorY = e.clientY - rect.top;
-      const scale = newZoom / viewportZoom;
-
-      const newPanX = cursorX - scale * (cursorX - viewportPan.x);
-      const newPanY = cursorY - scale * (cursorY - viewportPan.y);
-
-      setViewportPan({ x: newPanX, y: newPanY });
-      setViewportZoom(newZoom);
-
-      persistViewport(newPanX, newPanY, newZoom);
-    },
-    [viewportZoom, viewportPan, persistViewport],
-  );
-
-  /* ── Update child node positions on viewport change ────────── */
-  useEffect(() => {
-    if (!isOpen) return;
-    const { nodes: allNodes } = useCanvasStore.getState();
-    const childNodes = allNodes.filter((n) => n.parentId === id);
-    if (childNodes.length === 0) return;
-
-    // Compute offset from the saved positions (baseline)
-    // We don't move actual nodes; instead we let the CSS transform handle visual offset
-    // The transform is applied via the viewportRef's style
-  }, [viewportPan, viewportZoom, isOpen, id]);
-
-  /* ── context menu ──────────────────────────────────────────── */
+  /* ── context menu ── */
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
   const [_menuOpen, setMenuOpen] = useState(false);
   const [connectMenu, setConnectMenu] = useState(false);
   const ctxRef = useRef<HTMLDivElement>(null);
 
-  /* ── inline rename ─────────────────────────────────────────── */
+  /* ── inline rename ── */
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const [renameError, setRenameError] = useState(false);
@@ -389,11 +285,11 @@ function FolderNode({ id, data, selected }: NodeProps) {
     };
   }, [ctxMenu, closeCtx]);
 
-  /* ── available connection targets ───────────────────────────── */
+  /* ── available connection targets ── */
   const connectTargets = useMemo(
     () =>
       nodes
-        .filter((n) => n.id !== id && !n.parentId)
+        .filter((n) => n.id !== id)
         .map((n) => ({
           id: n.id,
           name: (n.data as unknown as CanvasNodeData).driveItem.name,
@@ -401,13 +297,10 @@ function FolderNode({ id, data, selected }: NodeProps) {
     [nodes, id],
   );
 
-  /* ── styles ─────────────────────────────────────────────────── */
-  const containerStyle: React.CSSProperties | undefined = isOpen
-    ? {
-        width: folderDimensions?.width ?? 640,
-        height: folderDimensions?.height ?? 320,
-      }
-    : undefined;
+  /* ── styles ── */
+  const containerStyle: React.CSSProperties | undefined = isExpanded
+    ? { width: rfWidth, height: rfHeight }
+    : { width: 220, height: 60 };
 
   const borderClass = selected
     ? 'border-indigo-500 ring-2 ring-indigo-500/20'
@@ -415,7 +308,7 @@ function FolderNode({ id, data, selected }: NodeProps) {
       ? 'border-indigo-500 bg-blue-50/50 shadow-lg'
       : isSearchActive && isSearchMatch
         ? 'border-[#1E40AF] ring-2 ring-[#1E40AF]/30'
-        : isOpen
+        : isExpanded
           ? 'border-gray-200'
           : 'border-blue-200 motion-safe:hover:shadow-md motion-safe:hover:-translate-y-[1px]';
 
@@ -424,26 +317,26 @@ function FolderNode({ id, data, selected }: NodeProps) {
 
   const removingClass = isRemoving ? 'animate-fade-out' : '';
 
-  /* ── hover state ────────────────────────────────────────────── */
+  /* ── hover state ── */
   const [isHovered, setIsHovered] = useState(false);
 
-  /* ── Expand/collapse animation classes ─────────────────────── */
+  /* ── Expand/collapse animation classes ── */
   const [animating, setAnimating] = useState<'expanding' | 'collapsing' | null>(null);
-  const prevOpen = useRef(isOpen);
+  const prevOpen = useRef(isExpanded);
 
   useEffect(() => {
-    if (isOpen && !prevOpen.current) {
+    if (isExpanded && !prevOpen.current) {
       setAnimating('expanding');
       const t = setTimeout(() => setAnimating(null), 200);
       prevOpen.current = true;
       return () => clearTimeout(t);
-    } else if (!isOpen && prevOpen.current) {
+    } else if (!isExpanded && prevOpen.current) {
       setAnimating('collapsing');
       const t = setTimeout(() => setAnimating(null), 300);
       prevOpen.current = false;
       return () => clearTimeout(t);
     }
-  }, [isOpen]);
+  }, [isExpanded]);
 
   const animClass = animating === 'expanding'
     ? 'animate-folder-expand'
@@ -451,13 +344,13 @@ function FolderNode({ id, data, selected }: NodeProps) {
       ? 'animate-folder-collapse'
       : '';
 
-  /* ── render ─────────────────────────────────────────────────── */
+  /* ── render ── */
   return (
     <div
       ref={rootElRef}
       className={[
-        'relative motion-safe:transition-all select-none',
-        isOpen
+        'relative motion-safe:transition-all select-none w-full h-full',
+        isExpanded
           ? 'bg-white border rounded-xl shadow-sm'
           : 'bg-blue-50/60 border rounded-xl p-3 w-[120px] cursor-pointer',
         borderClass,
@@ -479,7 +372,7 @@ function FolderNode({ id, data, selected }: NodeProps) {
       />
 
       {/* ── left target handle (visible on hover, closed only) ── */}
-      {!isOpen && (
+      {!isExpanded && (
         <div
           className={`absolute left-[-5px] top-1/2 -translate-y-1/2 motion-safe:transition-opacity ${
             isHovered ? 'opacity-100' : 'opacity-0'
@@ -494,19 +387,19 @@ function FolderNode({ id, data, selected }: NodeProps) {
         </div>
       )}
 
-      {isOpen ? (
+      {isExpanded ? (
         /* ════════════════════════════════════════════════════════ */
-        /*  OPEN STATE                                              */
+        /*  EXPANDED STATE — frame-style container                   */
         /* ════════════════════════════════════════════════════════ */
         <>
-          {/* NodeResizer — resize handles */}
+          {/* ── NodeResizer: resize desde cualquier borde, sin handles visibles ── */}
           <NodeResizer
             minWidth={300}
-            minHeight={200}
-            onResize={handleResize}
+            minHeight={100}
             keepAspectRatio={false}
-            color="#6366f1"
-            handleClassName="!w-3 !h-3 !bg-white !border-2 !border-indigo-500 !rounded-sm"
+            handleClassName="opacity-0"
+            lineClassName="opacity-0 hover:opacity-100 border-2 border-indigo-300 border-dashed transition-opacity"
+            isVisible={isExpanded && !isRenaming}
           />
 
           {/* ── header bar ── */}
@@ -558,27 +451,16 @@ function FolderNode({ id, data, selected }: NodeProps) {
             </button>
           </div>
 
-          {/* ── internal viewport content area ── */}
+          {/* ── content area — no internal viewport/pan/zoom ── */}
           <div
-            ref={viewportRef}
             className="relative overflow-hidden"
             style={{
               width: '100%',
               height: 'calc(100% - 34px)',
             }}
-            onMouseDown={handleViewportMouseDown}
-            onWheel={handleViewportWheel}
           >
-            {/* CSS transform wrapper for internal pan/zoom */}
-            <div
-              className="absolute inset-0"
-              style={{
-                transform: `translate(${viewportPan.x}px, ${viewportPan.y}px) scale(${viewportZoom})`,
-                transformOrigin: '0 0',
-                pointerEvents: 'none',
-              }}
-            />
-
+            {/* Children are rendered directly by ReactFlow on the main canvas.
+                We just show an empty state fallback when there are no children. */}
             {childCount === 0 && (
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                 <EmptyState
@@ -589,17 +471,17 @@ function FolderNode({ id, data, selected }: NodeProps) {
               </div>
             )}
 
-            {/* Pan hint when no child nodes are hovered */}
-            {childCount > 0 && !panState.current.isPanning && (
-              <div className="absolute bottom-2 left-1/2 -translate-x-1/2 text-[10px] text-gray-400 pointer-events-none motion-safe:opacity-0 motion-safe:hover:opacity-100 transition-opacity">
-                Arrastrá el fondo para navegar · Ctrl+scroll para zoom
+            {/* When expanded, show a visual hint that items can be dropped here */}
+            {childCount > 0 && (
+              <div className="absolute bottom-2 left-1/2 -translate-x-1/2 text-[10px] text-gray-400 pointer-events-none opacity-0 hover:opacity-100 transition-opacity">
+                Arrastrá archivos dentro de esta carpeta
               </div>
             )}
           </div>
         </>
       ) : (
         /* ════════════════════════════════════════════════════════ */
-        /*  CLOSED STATE                                            */
+        /*  COLLAPSED STATE                                          */
         /* ════════════════════════════════════════════════════════ */
         <div className="flex flex-col items-center gap-1.5 pt-2">
           <div
@@ -639,7 +521,7 @@ function FolderNode({ id, data, selected }: NodeProps) {
       />
 
       {/* ── source handle (right, visible on hover, closed only) ── */}
-      {!isOpen && (
+      {!isExpanded && (
         <div
           className={`absolute right-[-5px] top-1/2 -translate-y-1/2 motion-safe:transition-opacity ${
             isHovered ? 'opacity-100' : 'opacity-0'
@@ -761,6 +643,31 @@ function FolderNode({ id, data, selected }: NodeProps) {
               <path d="M4.5 2A1.5 1.5 0 003 3.5v13A1.5 1.5 0 004.5 18h11a1.5 1.5 0 001.5-1.5V7.414A1.5 1.5 0 0016.328 6.2l-4.124-4.124A1.5 1.5 0 0011.172 2H4.5z" />
             </svg>
             Conectar con...
+          </button>
+          <div className="border-t border-gray-100 my-1" />
+          <button
+            onClick={() => {
+              useCanvasStore.getState().bringToFront(id);
+              closeCtx();
+            }}
+            className="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 active:scale-[0.97] cursor-pointer"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="16" height="16" className="shrink-0 text-gray-400">
+              <path fillRule="evenodd" d="M5.23 2a4.23 4.23 0 00-4.23 4.23V13.5A2.5 2.5 0 003.5 16H5v1.25a.75.75 0 001.28.53l3.33-3.33a.75.75 0 000-1.06L6.28 10.1a.75.75 0 00-1.28.53v1.12H3.5a1 1 0 01-1-1V6.23A2.73 2.73 0 015.23 3.5H16.5a1 1 0 011 1v4.27a2.73 2.73 0 01-2.73 2.73H13a.75.75 0 000 1.5h1.77a4.23 4.23 0 004.23-4.23V4.5A2.5 2.5 0 0016.5 2H5.23z" clipRule="evenodd" />
+            </svg>
+            Traer al frente
+          </button>
+          <button
+            onClick={() => {
+              useCanvasStore.getState().sendToBack(id);
+              closeCtx();
+            }}
+            className="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 active:scale-[0.97] cursor-pointer"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="16" height="16" className="shrink-0 text-gray-400">
+              <path fillRule="evenodd" d="M14.77 18a4.23 4.23 0 004.23-4.23V6.5A2.5 2.5 0 0016.5 4H15V2.75a.75.75 0 00-1.28-.53l-3.33 3.33a.75.75 0 000 1.06l3.33 3.33a.75.75 0 001.28-.53V7.5h1.5a1 1 0 011 1v6.27a2.73 2.73 0 01-2.73 2.73H3.5a1 1 0 01-1-1V10.23A2.73 2.73 0 015.23 7.5H7a.75.75 0 000-1.5H5.23A4.23 4.23 0 001 10.23v5.27A2.5 2.5 0 003.5 18h11.27z" clipRule="evenodd" />
+            </svg>
+            Enviar atrás
           </button>
         </div>
       )}
