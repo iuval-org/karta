@@ -378,7 +378,7 @@ function FolderNode({ id, data, selected }: NodeProps) {
       if (resizeLive) return { width: resizeLive.w, height: resizeLive.h };
       return { width: rfWidth, height: rfHeight };
     }
-    return { width: 220, height: 60 };
+    return { width: 180 };
   })();
 
   const borderClass = selected
@@ -389,7 +389,7 @@ function FolderNode({ id, data, selected }: NodeProps) {
         ? 'border-[#1E40AF] ring-2 ring-[#1E40AF]/30'
         : isExpanded
           ? 'border-gray-200'
-          : 'border-blue-200 motion-safe:hover:shadow-md motion-safe:hover:-translate-y-[1px]';
+          : 'border-gray-200 motion-safe:hover:border-indigo-500/30 motion-safe:hover:shadow-md motion-safe:hover:-translate-y-0.5';
 
   const opacityClass =
     isSearchActive && !isSearchMatch ? 'opacity-30' : '';
@@ -431,7 +431,7 @@ function FolderNode({ id, data, selected }: NodeProps) {
         'relative select-none',
         isExpanded
           ? 'bg-white border rounded-xl shadow-sm'
-          : 'bg-blue-50/60 border rounded-xl p-3 cursor-pointer',
+          : 'bg-white border rounded-xl shadow-sm',
         borderClass,
         opacityClass,
         removingClass,
@@ -561,13 +561,18 @@ function FolderNode({ id, data, selected }: NodeProps) {
         </>
       ) : (
         /* ════════════════════════════════════════════════════════ */
-        /*  COLLAPSED STATE                                          */
+        /*  COLLAPSED STATE — file‑like card                         */
         /* ════════════════════════════════════════════════════════ */
-        <div className="flex flex-col items-center gap-1.5 pt-2">
-          <div
-            className="w-12 h-10"
-            dangerouslySetInnerHTML={{ __html: CLOSED_FOLDER_SVG }}
-          />
+        <div className="p-2.5 space-y-1.5">
+          {/* folder icon in thumbnail area */}
+          <div className="w-full aspect-[16/10] rounded-lg overflow-hidden bg-blue-50 flex items-center justify-center">
+            <div
+              className="w-14 h-12 text-blue-400 flex items-center justify-center"
+              dangerouslySetInnerHTML={{ __html: CLOSED_FOLDER_SVG }}
+            />
+          </div>
+
+          {/* folder name */}
           {isRenaming ? (
             <input
               ref={renameInputRef}
@@ -576,19 +581,27 @@ function FolderNode({ id, data, selected }: NodeProps) {
               onChange={handleRenameChange}
               onKeyDown={handleRenameKeyDown}
               onBlur={confirmRename}
-              className={`font-display font-semibold text-xs text-blue-900 text-center w-full bg-transparent border-b-2 outline-none px-0 py-0 ${
+              className={`font-display font-bold text-sm text-gray-900 leading-tight w-full bg-transparent border-b-2 outline-none px-0 py-0 ${
                 renameError ? 'border-red-500' : 'border-indigo-500'
               }`}
             />
           ) : (
             <p
-              className="font-display font-semibold text-xs text-blue-900 text-center leading-tight break-words line-clamp-2 max-w-[100px] cursor-text"
-              onDoubleClick={startRename}
+              className="font-display font-bold text-sm text-gray-900 leading-tight truncate cursor-text"
               title={item.name}
+              onDoubleClick={startRename}
             >
               {item.name}
             </p>
           )}
+
+          {/* metadata – child count */}
+          <p className="font-body text-xs text-gray-500 truncate">
+            {childCount > 0
+              ? `${childCount} archivo${childCount !== 1 ? 's' : ''}`
+              : 'Vacía'}
+            {' · '}Carpeta
+          </p>
         </div>
       )}
 
