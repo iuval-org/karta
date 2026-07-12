@@ -14,9 +14,8 @@ import {
   MarkerType,
 } from '@xyflow/react';
 import type { DriveItem } from '../types/drive';
-import { listChildren, listAllChildren, getUseMock } from '../services/drive';
-import { syncFolder as syncFolderService } from '../services/sync';
-import type { SyncResult } from '../services/sync';
+import { listChildren, listAllChildren, getUseMock, createItem } from '../services/drive';
+import { moveItem, renameItem } from '../services/drive';
 import { MOCK_ITEMS } from '../data/mockDriveItems';
 import { calcGridLayout } from '../utils/layout';
 import { debounce } from '../utils/debounce';
@@ -25,15 +24,6 @@ import type { NodePosition, StoredEdge } from '../services/db';
 import { useToastStore } from './toastStore';
 import { useRootStore } from './rootStore';
 import { findContainingFolder } from '../utils/folderBounds';
-import { operationQueue } from '../services/operationQueue';
-import {
-  syncToFirestore,
-  syncFromFirestore,
-  onRemoteChange,
-  removePositionsByScope,
-} from '../services/firestoreSync';
-import { useAuthStore } from './authStore';
-import type { Unsubscribe } from 'firebase/firestore';
 
 export interface CanvasNodeData {
   driveItem: DriveItem;
@@ -49,9 +39,6 @@ interface CanvasState {
   error: string | null;
   errorType: 'connection' | 'auth' | 'rate-limit' | 'unknown' | null;
   layout: 'grid' | 'free';
-
-  /** True mientras se está sincronizando con Google Drive. */
-  isSyncing: boolean;
 
   /** All items (all levels), populated at load time. */
   allItems: DriveItem[];
@@ -92,14 +79,6 @@ interface CanvasState {
 
   /** Pan mode: when true, drag moves the canvas (pan) instead of selecting. */
   panMode: boolean;
-
-  /** Active Firestore onSnapshot subscription (cleanup on unmount/logout). */
-  _firestoreUnsubscribe: Unsubscribe | null;
-
-  /** Initialize Firestore real-time sync subscription. */
-  initFirestoreSync: () => void;
-  /** Clean up Firestore real-time sync subscription. */
-  cleanupFirestoreSync: () => void;
   /** Enable or disable pan mode. */
   setPanMode: (enabled: boolean) => void;
   /** Toggle pan mode on/off. */
@@ -161,13 +140,6 @@ interface CanvasState {
   refreshCurrentFolder: () => Promise<void>;
 
   /**
-   * Sincroniza una carpeta con Google Drive usando Changes API.
-   * Detecta archivos creados, eliminados, renombrados y movidos
-   * desde la última sincronización y aplica cambios quirúrgicos al canvas.
-   */
-  syncFolder: (folderId: string) => Promise<void>;
-
-  /**
    * Renombra un nodo localmente (actualiza allItems + nodos) sin llamar a Drive.
    * Llama a renameItem de drive.ts para sincronizar con Drive.
    */
@@ -208,6 +180,25 @@ interface CanvasState {
    * Move a node to the back of the z-order (start of nodes array).
    */
   sendToBack: (nodeId: string) => void;
+
+  /** Directly set the nodes array (used during multi-selection drag). */
+  setNodes: (nodes: Node<CanvasNodeData>[]) => void;
+
+  /**
+   * Batch: bring all selected nodes to front.
+   */
+  batchBringToFront: (nodeIds: string[]) => void;
+
+  /**
+   * Batch: send all selected nodes to back.
+   */
+  batchSendToBack: (nodeIds: string[]) => void;
+
+  /**
+   * Batch: create a new folder and move selected items into it.
+   * Returns the new folder's DriveItem on success, null on failure.
+   */
+  groupInFolder: (nodeIds: string[], folderName: string) => Promise<DriveItem | null>;
 }
 
 /* ── helpers ─────────────────────────────────────────────────── */
@@ -291,14 +282,6 @@ const debouncedPersist = debounce(
 
     await Promise.all(dbOperations);
     console.log('[PERSIST] save completed');
-
-    // ── Sync to Firestore (background, non-blocking) ─────────────
-    const user = useAuthStore.getState().user;
-    if (user) {
-      syncToFirestore(user.uid, rootNodePositions).catch((err) => {
-        console.warn('[PERSIST] Firestore sync error (non-fatal):', err);
-      });
-    }
   },
   500,
 );
@@ -311,7 +294,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   selectedNodeId: null,
   selectedNodeIds: [],
   isLoading: false,
-  isSyncing: false,
   error: null,
   errorType: null,
   layout: 'grid',
@@ -327,7 +309,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   folderDragOrigins: {},
   folderDragChildren: {},
   panMode: typeof window !== 'undefined' && navigator.maxTouchPoints > 0,
-  _firestoreUnsubscribe: null,
 
   /* ── load ──────────────────────────────────────────────────── */
 
@@ -403,7 +384,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }
   },
 
-  /* ── Hydration: Firestore first, Dexie fallback ──────────── */
+  /* ── Dexie hydration ──────────────────────────────────────── */
 
   hydrateFromDexie: async (scope?: string) => {
     const { allItems, activeTabId, currentFolderId } = get();
@@ -411,29 +392,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
     const currentScope = scope ?? persistenceScope(activeTabId, currentFolderId);
 
-    // ── Try Firestore first ──────────────────────────────────
-    const user = useAuthStore.getState().user;
-    let savedPositions = await syncFromFirestore(user?.uid ?? '', currentScope);
-
-    // If Firestore has positions, log and use them
-    if (savedPositions.length > 0) {
-      console.log('[HYDRATE] loaded from Firestore:', {
-        scope: currentScope,
-        count: savedPositions.length,
-      });
-    } else {
-      // ── Fallback: Dexie ────────────────────────────────────
-      savedPositions = await db.positions.filter(p => p.tabId === currentScope).toArray();
-      console.log('[HYDRATE] loaded from Dexie (Firestore empty/unavailable):', {
-        scope: currentScope,
-        count: savedPositions.length,
-      });
-    }
-
-    const [savedEdges, savedFolderStates] = await Promise.all([
+    const [savedPositions, savedEdges, savedFolderStates] = await Promise.all([
+      db.positions.filter(p => p.tabId === currentScope).toArray(),
       db.edges.filter(e => e.tabId === currentScope).toArray(),
       db.folderState.filter(fs => fs.tabId === currentScope).toArray(),
     ]);
+
+    console.log('[HYDRATE] checking scope:', currentScope);
+    console.log('[HYDRATE] savedPositions found:', savedPositions.length);
 
     // If no persisted data, keep grid layout
     if (savedPositions.length === 0 && savedFolderStates.length === 0) {
@@ -475,30 +441,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     });
 
     console.log('[HYDRATE] complete — nodes:', get().nodes.length, 'expanded:', Object.keys(expandedFolders).length);
-
-    // ── Subscribe to real-time Firestore changes ─────────────
-    if (user) {
-      get().cleanupFirestoreSync(); // Clean up any previous subscription
-      const unsub = onRemoteChange(user.uid, (remotePositions) => {
-        const currentNodes = get().nodes;
-        const remotePosMap = new Map(
-          remotePositions.map((p) => [p.fileId, { x: p.x, y: p.y }]),
-        );
-
-        const mergedNodes = currentNodes.map((n) => {
-          const pos = remotePosMap.get(n.id);
-          if (pos) {
-            return { ...n, position: pos };
-          }
-          return n;
-        });
-
-        set({ nodes: mergedNodes });
-        console.log('[HYDRATE] real-time update applied:', remotePositions.length, 'positions');
-      }, currentScope);
-
-      set({ _firestoreUnsubscribe: unsub });
-    }
   },
 
   /* ── persistent save (immediate, not debounced) ───────────── */
@@ -540,19 +482,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }
 
     await Promise.all(dbOps);
-
-    // ── Sync to Firestore (background, non-blocking) ─────────────
-    const user = useAuthStore.getState().user;
-    if (user) {
-      syncToFirestore(user.uid, allNodePositions).catch((err) => {
-        console.warn('[persistNow] Firestore sync error (non-fatal):', err);
-      });
-    }
   },
 
   /* ── folder toggle ─────────────────────────────────────────── */
 
-  toggleFolder: async (folderId: string) => {
+  toggleFolder: (folderId: string) => {
     const { expandedFolders } = get();
     const currentlyOpen = expandedFolders[folderId] ?? false;
 
@@ -562,14 +496,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       delete next[folderId];
       set({ expandedFolders: next });
     } else {
-      // OPEN: mark as expanded
+      // OPEN: mark as expanded (all nodes stay root-level, Canvas filters visibility)
       set({
         expandedFolders: { ...expandedFolders, [folderId]: true },
-      });
-
-      // Sync con Google Drive al expandir carpeta
-      get().syncFolder(folderId).catch((err) => {
-        console.error('[toggleFolder] sync error:', err);
       });
     }
 
@@ -590,14 +519,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const scope = persistenceScope(activeTabId, currentFolderId);
     db.positions.filter(p => p.tabId === scope).delete();
     db.folderState.filter(fs => fs.tabId === scope).delete();
-
-    // Also remove from Firestore
-    const user = useAuthStore.getState().user;
-    if (user) {
-      removePositionsByScope(user.uid, scope).catch((err) => {
-        console.warn('[resetLayout] Firestore cleanup error:', err);
-      });
-    }
 
     set({ expandedFolders: {} });
 
@@ -897,31 +818,28 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         // At this point we know currentParentId !== rootFolderId
         // (handled by early return above), so this is a real move.
         const rootId = rootFolderId || '';
-        // Queue Drive API call (optimistic local update follows)
-        operationQueue.push({
-          type: 'move',
-          fileId: node.id,
-          payload: { newParentId: rootId, oldParentId: currentParentId },
-        }).catch((err) => {
-          console.error('[onNodeDragStop] Queue error moving to root:', err);
+        try {
+          await moveItem(node.id, rootId, currentParentId);
+
+          // Update local state
+          const updatedItems = state.allItems.map((item) =>
+            item.id === node.id
+              ? { ...item, parentId: undefined }
+              : item,
+          );
+
+          set({ allItems: updatedItems });
+          useToastStore.getState().addToast({
+            type: 'success',
+            message: 'Movido a la raíz',
+          });
+        } catch (err) {
+          console.error('[onNodeDragStop] Error moving to root:', err);
           useToastStore.getState().addToast({
             type: 'error',
             message: 'No se pudo mover. Reintentá.',
           });
-        });
-
-        // Update local state immediately (optimistic)
-        const updatedItems = state.allItems.map((item) =>
-          item.id === node.id
-            ? { ...item, parentId: undefined }
-            : item,
-        );
-
-        set({ allItems: updatedItems });
-        useToastStore.getState().addToast({
-          type: 'success',
-          message: 'Movido a la raíz',
-        });
+        }
       }
     }
 
@@ -986,19 +904,18 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       }
     }
 
-    // ── Queue Drive API call (optimistic local update follows) ──
-    operationQueue.push({
-      type: 'move',
-      fileId: itemId,
-      payload: { newParentId: targetFolderId, oldParentId },
-    }).catch((err) => {
+    // ── Drive API call ──────────────────────────────────────────
+    try {
+      await moveItem(itemId, targetFolderId, oldParentId);
+    } catch (err) {
       const message = err instanceof Error ? err.message : 'Error al mover archivo';
       useToastStore.getState().addToast({
         type: 'error',
         message: 'No se pudo mover. Reintentá.',
       });
-      console.error('[moveItemToFolder] queue error:', message);
-    });
+      console.error('[moveItemToFolder] API error:', message);
+      return false;
+    }
 
     // ── Update local state (just allItems — nodes stay root-level) ──
     const updatedItems = state.allItems.map((item) => {
@@ -1125,89 +1042,22 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }
   },
 
-  /* ── Sync folder (Drive Changes API) ───────────────────────────── */
-
-  syncFolder: async (folderId: string) => {
-    const state = get();
-    if (state.isSyncing) return;
-
-    // Only sync for real Drive (not mock)
-    if (getUseMock()) return;
-
-    set({ isSyncing: true });
-
-    try {
-      const result: SyncResult = await syncFolderService(folderId);
-
-      if (result.changeCount === 0) {
-        return;
-      }
-
-      const { allItems, nodes } = get();
-
-      // 1. Remove items deleted in Drive
-      const removeSet = new Set(result.removed);
-      const filteredItems = allItems.filter((i) => !removeSet.has(i.id));
-      const filteredNodes = nodes.filter((n) => !removeSet.has(n.id));
-
-      // 2. Add new items
-      const newNodes = result.added
-        .filter((item) => !filteredItems.find((i) => i.id === item.id))
-        .map((item) => ({
-          id: item.id,
-          type: item.isFolder ? 'folderNode' as const : 'fileNode' as const,
-          position: { x: 12, y: 12 },
-          data: { driveItem: item } as CanvasNodeData,
-          deletable: false,
-        }));
-
-      const mergedItems = [
-        ...filteredItems,
-        ...result.added.filter((a) => !filteredItems.find((i) => i.id === a.id)),
-      ];
-
-      // 3. Rename items
-      const renamedMap = new Map(result.renamed.map((r) => [r.fileId, r.newName]));
-      const renamedNodes = filteredNodes.map((node) => {
-        const newName = renamedMap.get(node.id);
-        if (newName && newName !== node.data.driveItem.name) {
-          return {
-            ...node,
-            data: {
-              ...node.data,
-              driveItem: { ...node.data.driveItem, name: newName },
-            },
-          };
-        }
-        return node;
-      });
-
-      set({
-        allItems: mergedItems,
-        nodes: [...renamedNodes, ...newNodes],
-      });
-
-      // Persist changes
-      const persistState = get();
-      debouncedPersist(
-        persistState.nodes,
-        persistState.edges,
-        persistState.expandedFolders,
-        persistenceScope(persistState.activeTabId, persistState.currentFolderId),
-      );
-    } catch (err) {
-      console.error('[syncFolder] Error:', err);
-    } finally {
-      set({ isSyncing: false });
-    }
-  },
-
   /* ── Rename node item ──────────────────────────────────────────── */
 
   renameNodeItem: async (fileId: string, newName: string) => {
     const { allItems, nodes } = get();
 
-    // Update local state immediately (optimistic)
+    try {
+      await renameItem(fileId, newName);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Error al renombrar';
+      useToastStore.getState().addToast({
+        type: 'error',
+        message,
+      });
+      return false;
+    }
+
     const updatedItems = allItems.map((item) => {
       if (item.id === fileId) {
         return { ...item, name: newName };
@@ -1229,19 +1079,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     });
 
     set({ allItems: updatedItems, nodes: updatedNodes });
-
-    // Queue Drive API call
-    operationQueue.push({
-      type: 'rename',
-      fileId,
-      payload: { newName },
-    }).catch((err) => {
-      const message = err instanceof Error ? err.message : 'Error al renombrar';
-      useToastStore.getState().addToast({
-        type: 'error',
-        message,
-      });
-    });
 
     const state = get();
     debouncedPersist(
@@ -1335,22 +1172,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     // 1. Start fade-out animation
     set({ removingNodeIds: [...removingNodeIds, ...toRemove] });
 
-    // 2. Queue Drive API calls for each item being removed
-    for (const fileId of toRemove) {
-      operationQueue.push({
-        type: 'delete',
-        fileId,
-        payload: {},
-      }).catch((err) => {
-        console.error(`[removeItems] queue error for ${fileId}:`, err);
-        useToastStore.getState().addToast({
-          type: 'error',
-          message: 'No se pudo eliminar. Reintentá.',
-        });
-      });
-    }
-
-    // 3. After animation completes, actually remove from state
+    // 2. After animation completes, actually remove from state
     setTimeout(() => {
       const currentState = get();
       const removeSet = new Set(toRemove);
@@ -1383,46 +1205,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         persistenceScope(stateAfterRemove.activeTabId, stateAfterRemove.currentFolderId),
       );
     }, 300);
-  },
-
-  /* ── Firestore sync lifecycle ─────────────────────────────── */
-
-  initFirestoreSync: () => {
-    const { activeTabId, currentFolderId, _firestoreUnsubscribe } = get();
-    if (_firestoreUnsubscribe) {
-      _firestoreUnsubscribe();
-    }
-
-    const user = useAuthStore.getState().user;
-    if (!user) return;
-
-    const scope = persistenceScope(activeTabId, currentFolderId);
-    const unsub = onRemoteChange(user.uid, (remotePositions) => {
-      const currentNodes = get().nodes;
-      const remotePosMap = new Map(
-        remotePositions.map((p) => [p.fileId, { x: p.x, y: p.y }]),
-      );
-
-      const mergedNodes = currentNodes.map((n) => {
-        const pos = remotePosMap.get(n.id);
-        if (pos) {
-          return { ...n, position: pos };
-        }
-        return n;
-      });
-
-      set({ nodes: mergedNodes });
-    }, scope);
-
-    set({ _firestoreUnsubscribe: unsub });
-  },
-
-  cleanupFirestoreSync: () => {
-    const { _firestoreUnsubscribe } = get();
-    if (_firestoreUnsubscribe) {
-      _firestoreUnsubscribe();
-      set({ _firestoreUnsubscribe: null });
-    }
   },
 
   /* ── Z-index (traer al frente / enviar atrás) ─────────────────── */
@@ -1461,5 +1243,154 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       get().expandedFolders,
       persistenceScope(get().activeTabId, get().currentFolderId),
     );
+  },
+
+  /* ── Direct setNodes (for multi-selection drag) ────────────────── */
+
+  setNodes: (nodes: Node<CanvasNodeData>[]) => {
+    set({ nodes });
+  },
+
+  /* ── Batch z-index operations ─────────────────────────────────── */
+
+  batchBringToFront: (nodeIds: string[]) => {
+    const { nodes } = get();
+    const idSet = new Set(nodeIds);
+    const selected = nodes.filter((n) => idSet.has(n.id));
+    const rest = nodes.filter((n) => !idSet.has(n.id));
+    const updated = [...rest, ...selected]; // selected at end = front
+
+    set({ nodes: updated });
+
+    debouncedPersist(
+      updated,
+      get().edges,
+      get().expandedFolders,
+      persistenceScope(get().activeTabId, get().currentFolderId),
+    );
+  },
+
+  batchSendToBack: (nodeIds: string[]) => {
+    const { nodes } = get();
+    const idSet = new Set(nodeIds);
+    const selected = nodes.filter((n) => idSet.has(n.id));
+    const rest = nodes.filter((n) => !idSet.has(n.id));
+    const updated = [...selected, ...rest]; // selected at start = back
+
+    set({ nodes: updated });
+
+    debouncedPersist(
+      updated,
+      get().edges,
+      get().expandedFolders,
+      persistenceScope(get().activeTabId, get().currentFolderId),
+    );
+  },
+
+  /* ── Group in folder (creates folder, moves items into it) ────── */
+
+  groupInFolder: async (nodeIds: string[], folderName: string) => {
+    const state = get();
+
+    try {
+      // 1. Create the folder in Drive
+      const newFolder = await createItem(
+        folderName,
+        'application/vnd.google-apps.folder',
+        state.currentFolderId || useRootStore.getState().rootFolderId || 'root',
+      );
+
+      // 2. Move all selected items into the new folder
+      const results = await Promise.allSettled(
+        nodeIds.map((itemId) => {
+          const item = state.allItems.find((i) => i.id === itemId);
+          const oldParentId = item?.parentId ?? '';
+          return moveItem(itemId, newFolder.id, oldParentId);
+        }),
+      );
+
+      const succeeded: string[] = [];
+      let failedCount = 0;
+      results.forEach((result, i) => {
+        if (result.status === 'fulfilled') {
+          succeeded.push(nodeIds[i]);
+        } else {
+          failedCount++;
+          console.error(`[groupInFolder] Failed to move ${nodeIds[i]}:`, result.reason);
+        }
+      });
+
+      // 3. Update local state
+      const updatedItems = state.allItems.map((item) => {
+        if (succeeded.includes(item.id)) {
+          return { ...item, parentId: newFolder.id };
+        }
+        return item;
+      });
+      updatedItems.push(newFolder);
+
+      // 4. Add folder node to canvas with a position near the selection center
+      const selectedNodes = state.nodes.filter((n) => succeeded.includes(n.id));
+      const avgX = selectedNodes.length > 0
+        ? Math.round(selectedNodes.reduce((s, n) => s + n.position.x, 0) / selectedNodes.length)
+        : 200;
+      const avgY = selectedNodes.length > 0
+        ? Math.round(selectedNodes.reduce((s, n) => s + n.position.y, 0) / selectedNodes.length)
+        : 200;
+
+      const folderNode: Node<CanvasNodeData> = {
+        id: newFolder.id,
+        type: 'folderNode',
+        position: { x: avgX, y: avgY },
+        data: { driveItem: newFolder } as CanvasNodeData,
+        deletable: false,
+      };
+
+      const updatedNodes = [
+        ...state.nodes.map((n) => {
+          if (succeeded.includes(n.id)) {
+            return {
+              ...n,
+              data: {
+                ...n.data,
+                driveItem: { ...n.data.driveItem, parentId: newFolder.id },
+              } as unknown as CanvasNodeData,
+            };
+          }
+          return n;
+        }),
+        folderNode,
+      ];
+
+      set({
+        nodes: updatedNodes,
+        allItems: updatedItems,
+      });
+
+      // 5. Persist
+      const newState = get();
+      debouncedPersist(
+        newState.nodes,
+        newState.edges,
+        newState.expandedFolders,
+        persistenceScope(newState.activeTabId, newState.currentFolderId),
+      );
+
+      useToastStore.getState().addToast({
+        type: 'success',
+        message: failedCount > 0
+          ? `Carpeta creada. ${succeeded.length} archivos movidos, ${failedCount} fallaron.`
+          : `Carpeta \"${folderName}\" creada con ${succeeded.length} archivos ✅`,
+      });
+
+      return newFolder;
+    } catch (err) {
+      console.error('[groupInFolder] Error:', err);
+      useToastStore.getState().addToast({
+        type: 'error',
+        message: 'No se pudo agrupar. Reintentá.',
+      });
+      return null;
+    }
   },
 }));

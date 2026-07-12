@@ -266,6 +266,26 @@ function FolderNode({ id, data, selected }: NodeProps) {
     closeCtx();
   }, [clearSelection, closeCtx]);
 
+  const handleBatchBringToFront = useCallback(() => {
+    const state = useCanvasStore.getState();
+    state.batchBringToFront(state.selectedNodeIds);
+    closeCtx();
+  }, [closeCtx]);
+
+  const handleBatchSendToBack = useCallback(() => {
+    const state = useCanvasStore.getState();
+    state.batchSendToBack(state.selectedNodeIds);
+    closeCtx();
+  }, [closeCtx]);
+
+  const handleGroupInFolder = useCallback(() => {
+    const name = window.prompt('Nombre de la carpeta:', 'Grupo');
+    if (!name || !name.trim()) return;
+    const state = useCanvasStore.getState();
+    state.groupInFolder(state.selectedNodeIds, name.trim());
+    closeCtx();
+  }, [closeCtx]);
+
   /* close context menu on outside click / Escape */
   useEffect(() => {
     if (!ctxMenu) return;
@@ -710,6 +730,34 @@ function FolderNode({ id, data, selected }: NodeProps) {
               <path fillRule="evenodd" d="M4.25 2A2.25 2.25 0 002 4.25v2.5A2.25 2.25 0 004.25 9h2.5A2.25 2.25 0 009 6.75v-2.5A2.25 2.25 0 006.75 2h-2.5zm0 9A2.25 2.25 0 002 13.25v2.5A2.25 2.25 0 004.25 18h2.5A2.25 2.25 0 009 15.75v-2.5A2.25 2.25 0 006.75 11h-2.5zm9-9A2.25 2.25 0 0011 4.25v2.5A2.25 2.25 0 0013.25 9h2.5A2.25 2.25 0 0018 6.75v-2.5A2.25 2.25 0 0015.75 2h-2.5zm0 9A2.25 2.25 0 0011 13.25v2.5A2.25 2.25 0 0013.25 18h2.5A2.25 2.25 0 0018 15.75v-2.5A2.25 2.25 0 0015.75 11h-2.5z" clipRule="evenodd" />
             </svg>
             Alinear a grilla
+          </button>
+          <button
+            onClick={handleGroupInFolder}
+            className="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 active:scale-[0.97] cursor-pointer"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="16" height="16" className="shrink-0 text-gray-400">
+              <path d="M3.75 3A1.75 1.75 0 002 4.75v10.5c0 .966.784 1.75 1.75 1.75h12.5A1.75 1.75 0 0018 15.25v-8.5A1.75 1.75 0 0016.25 5h-4.836a.25.25 0 01-.177-.073L9.823 3.513A1.75 1.75 0 008.586 3H3.75z" />
+            </svg>
+            Agrupar en carpeta
+          </button>
+          <div className="border-t border-gray-100 my-1" />
+          <button
+            onClick={handleBatchBringToFront}
+            className="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 active:scale-[0.97] cursor-pointer"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="16" height="16" className="shrink-0 text-gray-400">
+              <path fillRule="evenodd" d="M5.23 2a4.23 4.23 0 00-4.23 4.23V13.5A2.5 2.5 0 003.5 16H5v1.25a.75.75 0 001.28.53l3.33-3.33a.75.75 0 000-1.06L6.28 10.1a.75.75 0 00-1.28.53v1.12H3.5a1 1 0 01-1-1V6.23A2.73 2.73 0 015.23 3.5H16.5a1 1 0 011 1v4.27a2.73 2.73 0 01-2.73 2.73H13a.75.75 0 000 1.5h1.77a4.23 4.23 0 004.23-4.23V4.5A2.5 2.5 0 0016.5 2H5.23z" clipRule="evenodd" />
+            </svg>
+            Traer al frente
+          </button>
+          <button
+            onClick={handleBatchSendToBack}
+            className="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 active:scale-[0.97] cursor-pointer"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="16" height="16" className="shrink-0 text-gray-400">
+              <path fillRule="evenodd" d="M14.77 18a4.23 4.23 0 004.23-4.23V6.5A2.5 2.5 0 0016.5 4H15V2.75a.75.75 0 00-1.28-.53l-3.33 3.33a.75.75 0 000 1.06l3.33 3.33a.75.75 0 001.28-.53V7.5h1.5a1 1 0 011 1v6.27a2.73 2.73 0 01-2.73 2.73H3.5a1 1 0 01-1-1V10.23A2.73 2.73 0 015.23 7.5H7a.75.75 0 000-1.5H5.23A4.23 4.23 0 001 10.23v5.27A2.5 2.5 0 003.5 18h11.27z" clipRule="evenodd" />
+            </svg>
+            Enviar atrás
           </button>
           <div className="border-t border-gray-100 my-1" />
           <button
