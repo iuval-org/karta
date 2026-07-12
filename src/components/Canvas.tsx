@@ -68,35 +68,13 @@ function Flow() {
   const visibleNodes = nodes.filter((node) => {
     if (node.type === 'folderNode') return true;
 
-    // Check if this node is inside any collapsed folder
-    for (const [folderId, isExpanded] of Object.entries(expandedFolders)) {
-      if (!isExpanded) {
-        // Build a quick bounds check: find the folder node
-        const folderNode = nodes.find((n) => n.id === folderId);
-        if (!folderNode) continue;
+    // Find the DriveItem for this node to check its parentId
+    const driveItem = allItems.find((i) => i.id === node.id);
+    if (!driveItem?.parentId) return true; // root-level items always visible
 
-        // Rough bounds check using node sizes
-        const folderPos = folderNode.position;
-        const folderW = (folderNode as any).measured?.width ?? 640;
-        const folderH = (folderNode as any).measured?.height ?? 320;
-        const itemW = (node as any).measured?.width ?? 180;
-        const itemH = (node as any).measured?.height ?? 170;
-
-        const itemCenterX = node.position.x + itemW / 2;
-        const itemCenterY = node.position.y + itemH / 2;
-
-        if (
-          itemCenterX >= folderPos.x &&
-          itemCenterX <= folderPos.x + folderW &&
-          itemCenterY >= folderPos.y &&
-          itemCenterY <= folderPos.y + folderH
-        ) {
-          return false; // Hide — inside collapsed folder
-        }
-      }
-    }
-
-    return true;
+    // Only show items whose parent folder is expanded.
+    // expandedFolders only contains entries for folders that ARE expanded (value = true).
+    return expandedFolders[driveItem.parentId] === true;
   });
 
   const initialized = nodes.length > 0;

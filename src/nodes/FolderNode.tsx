@@ -398,7 +398,7 @@ function FolderNode({ id, data, selected }: NodeProps) {
             minHeight={100}
             keepAspectRatio={false}
             handleClassName="opacity-0"
-            lineClassName="opacity-0 hover:opacity-100 border-2 border-indigo-300 border-dashed transition-opacity"
+            lineClassName="z-50 pointer-events-auto border-[6px] border-transparent hover:border-indigo-300 hover:border-dashed transition-all duration-150 ease-in-out cursor-nw-resize"
             isVisible={isExpanded && !isRenaming}
           />
 

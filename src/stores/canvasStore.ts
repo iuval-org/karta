@@ -23,7 +23,7 @@ import { db } from '../services/db';
 import type { NodePosition, StoredEdge } from '../services/db';
 import { useToastStore } from './toastStore';
 import { useRootStore } from './rootStore';
-import { findContainingFolder, getChildrenInFolder } from '../utils/folderBounds';
+import { findContainingFolder } from '../utils/folderBounds';
 
 export interface CanvasNodeData {
   driveItem: DriveItem;
@@ -66,8 +66,8 @@ interface CanvasState {
   /** IDs of items pending trash confirmation (to show ConfirmModal in Canvas). */
   pendingTrashItemIds: string[];
 
-  /** Stores the ORIGINAL position + dimensions of a folder node at drag start. Used in onNodeDrag to distinguish real drags (position changes >5px) from resize operations (dimension changes >5px). */
-  folderDragOrigins: Record<string, { x: number; y: number; width: number; height: number }>;
+  /** Stores the ORIGINAL position AND dimensions of a folder node at drag start. Used in onNodeDragStop to compute the delta for repositioning children and to distinguish drag from resize (if dimensions changed, it's a resize). */
+  folderDragOrigins: Record<string, { x: number; y: number; width?: number; height?: number }>;
 
   /**
    * Stores the list of child IDs captured at drag start for each folder.
@@ -153,8 +153,9 @@ interface CanvasState {
   clearSelection: () => void;
 
   /**
-   * Called on every drag move to update child positions alongside the folder.
-   * Also tracks folder hover target for visual feedback.
+   * Called on every drag move. During drag, ReactFlow handles all node movement
+   * including resize. DO NOT move children here — that happens in onNodeDragStop
+   * to avoid interfering with ReactFlow's resize logic.
    */
   onNodeDrag: (_event: unknown, node: Node) => void;
 
@@ -526,25 +527,15 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   /* ── React Flow handlers ───────────────────────────────────── */
 
   onNodesChange: (changes: NodeChange[]) => {
-    // Filter out position changes from NodeResizer (same as before)
-    const hasDimension = new Set(
-      changes
-        .filter((c): c is NodeChange & { type: 'dimensions'; id: string } => c.type === 'dimensions')
-        .map((c) => c.id),
-    );
-    const filtered = changes.filter((c) => {
-      if (c.type === 'position' && hasDimension.has((c as NodeChange & { id: string }).id)) {
-        return false;
-      }
-      return true;
-    });
-
-    if (filtered.length > 0) {
-      set({ nodes: applyNodeChanges(filtered, get().nodes) as Node<CanvasNodeData>[] });
+    // Let ALL changes through — ReactFlow needs position updates during
+    // resize from left/top edges to correctly shift position.x/position.y.
+    // Child movement is handled in onNodeDrag, not here.
+    if (changes.length > 0) {
+      set({ nodes: applyNodeChanges(changes, get().nodes) as Node<CanvasNodeData>[] });
     }
 
     // If a real position change happened, persist (debounced)
-    if (filtered.some((c) => c.type === 'position')) {
+    if (changes.some((c) => c.type === 'position')) {
       const state = get();
       debouncedPersist(
         state.nodes,
@@ -657,75 +648,105 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   onNodeDragStart: (_event: unknown, node: Node) => {
     if (node.type === 'folderNode') {
       const state = get();
-      const nodeSizes = new Map<string, { width: number; height: number }>();
-      for (const n of state.nodes) {
-        const size = (n as any).measured ?? { width: 180, height: 170 };
-        nodeSizes.set(n.id, size);
-      }
-      const children = getChildrenInFolder(node.id, state.nodes, nodeSizes);
-      const measured = (node as any).measured ?? {};
-      const origins = { ...state.folderDragOrigins } as Record<string, { x: number; y: number; width: number; height: number }>;
+      // Use parentId from Drive items instead of positional bounds detection.
+      // Bounds-based detection (getChildrenInFolder) picks up items near or
+      // overlapping the folder's visual area that aren't actual children,
+      // causing items outside the folder to move when dragging a folder.
+      const childIds = state.allItems
+        .filter((item) => item.parentId === node.id)
+        .map((item) => item.id);
+      const origins = { ...state.folderDragOrigins };
+      // Read dimensions from the store node — it has the most reliable
+      // measured width/height (the event node may not have them populated yet).
+      const storeNode = get().nodes.find(n => n.id === node.id);
       origins[node.id] = {
         x: node.position.x,
         y: node.position.y,
-        width: measured.width ?? 640,
-        height: measured.height ?? 320,
+        width: (storeNode as any)?.width ?? (node as any).width ?? undefined,
+        height: (storeNode as any)?.height ?? (node as any).height ?? undefined,
       };
       set({
         folderDragOrigins: origins,
         folderDragChildren: {
           ...state.folderDragChildren,
-          [node.id]: children.map((c) => c.id),
+          [node.id]: childIds,
         },
       });
     }
   },
 
-  onNodeDrag: (_event: unknown, node: Node) => {
-    if (node.type === 'folderNode') {
-      const origin = get().folderDragOrigins[node.id];
-      const childIds = get().folderDragChildren[node.id];
-      if (!origin || !childIds) return;
-
-      // ── Detect resize: if dimensions changed >5px, this is a resize, not a drag ──
-      const measured = (node as any).measured ?? {};
-      const curWidth = measured.width ?? 640;
-      const curHeight = measured.height ?? 320;
-      const widthDelta = Math.abs(curWidth - origin.width);
-      const heightDelta = Math.abs(curHeight - origin.height);
-      if (widthDelta > 5 || heightDelta > 5) return;
-
-      const dx = node.position.x - origin.x;
-      const dy = node.position.y - origin.y;
-
-      // Only move children if total position change exceeds 5px.
-      // During resize from any edge, position changes are minimal (<5px).
-      // During a real drag, position changes significantly (>5px).
-      if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
-        const { nodes, expandedFolders } = get();
-        // Only move children if the folder is expanded (children are visible)
-        if (!expandedFolders[node.id]) return;
-
-        const childSet = new Set(childIds);
-        const updatedNodes = nodes.map((n) => {
-          if (childSet.has(n.id)) {
-            return {
-              ...n,
-              position: {
-                x: n.position.x + dx,
-                y: n.position.y + dy,
-              },
-            };
-          }
-          return n;
-        });
-
-        set({ nodes: updatedNodes });
-      }
-    }
+  onNodeDrag: (_event: unknown, _node: Node) => {
+    // Intentionally empty — ReactFlow handles all node movement including resize
+    // during drag. Children are repositioned in onNodeDragStop to avoid
+    // interfering with ReactFlow's resize logic.
   },
 
   onNodeDragStop: async (_event: unknown, node: Node) => {
+    // ── Reposition children on drag stop (not during drag, avoids interfering with resize) ──
+    if (node.type === 'folderNode') {
+      const state = get();
+      const origin = state.folderDragOrigins[node.id];
+      const childIds = state.folderDragChildren[node.id];
+      if (origin && childIds?.length) {
+        const dx = node.position.x - origin.x;
+        const dy = node.position.y - origin.y;
+
+        // ── Detect resize vs drag — READ DIMENSIONS FROM STORE ──
+        // CRITICAL: The 'node' parameter from ReactFlow's onNodeDragStop has
+        // UPDATED position.y but STALE width/height during top/bottom-edge
+        // resize operations. Dimension changes are applied via onNodesChange
+        // which updates the store, but the drag-stop event's node reference
+        // does NOT reflect those dimension updates. Always read dimensions
+        // from the store node, which has the latest values.
+        const storeNode = get().nodes.find(n => n.id === node.id);
+        const currentWidth = (storeNode as any)?.width ?? (node as any).width ?? 0;
+        const currentHeight = (storeNode as any)?.height ?? (node as any).height ?? 0;
+        const isResize =
+          origin.width !== undefined &&
+          origin.height !== undefined &&
+          (Math.abs(currentWidth - origin.width) > 3 ||
+            Math.abs(currentHeight - origin.height) > 3);
+
+        if (!isResize && (Math.abs(dx) > 5 || Math.abs(dy) > 5)) {
+          const { nodes, expandedFolders } = get();
+          // Only move children if the folder is expanded (children are visible)
+          if (expandedFolders[node.id]) {
+            const childSet = new Set(childIds);
+            const updatedNodes = nodes.map((n) => {
+              if (childSet.has(n.id)) {
+                return {
+                  ...n,
+                  position: {
+                    x: n.position.x + dx,
+                    y: n.position.y + dy,
+                  },
+                };
+              }
+              return n;
+            });
+            set({ nodes: updatedNodes });
+
+            // Persist after children repositioned
+            const newState = get();
+            debouncedPersist(
+              newState.nodes,
+              newState.edges,
+              newState.expandedFolders,
+              persistenceScope(newState.activeTabId, newState.currentFolderId),
+            );
+          }
+        }
+      }
+
+      // Clean up drag state
+      const { [node.id]: _, ...restOrigins } = state.folderDragOrigins;
+      const { [node.id]: __, ...restChildren } = state.folderDragChildren;
+      set({
+        folderDragOrigins: restOrigins,
+        folderDragChildren: restChildren,
+      });
+    }
+
     const state = get();
     const driveItem = (node.data as unknown as CanvasNodeData)?.driveItem;
     if (!driveItem) return;

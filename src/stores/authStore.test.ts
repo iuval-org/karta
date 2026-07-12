@@ -36,7 +36,7 @@ vi.mock('firebase/auth', () => ({
 }));
 
 beforeEach(() => {
-  sessionStorage.clear();
+  localStorage.clear();
   // Reset the store state
   useAuthStore.setState({
     user: null,
@@ -48,18 +48,18 @@ beforeEach(() => {
 });
 
 describe('Auth store', () => {
-  it('guarda oAuthAccessToken en sessionStorage al loguearse', async () => {
+  it('guarda oAuthAccessToken en localStorage al loguearse', async () => {
     mockSignInWithPopup.mockResolvedValue({ user: { uid: 'user-1', email: 'test@test.com' } });
 
     await useAuthStore.getState().loginWithGoogle();
 
-    expect(sessionStorage.getItem(OAUTH_TOKEN_KEY)).toBe('google-oauth-token-123');
+    expect(localStorage.getItem(OAUTH_TOKEN_KEY)).toBe('google-oauth-token-123');
     expect(useAuthStore.getState().oAuthAccessToken).toBe('google-oauth-token-123');
     expect(useAuthStore.getState().error).toBeNull();
   });
 
-  it('limpia sessionStorage al cerrar sesión', async () => {
-    sessionStorage.setItem(OAUTH_TOKEN_KEY, 'some-token');
+  it('limpia localStorage al cerrar sesión', async () => {
+    localStorage.setItem(OAUTH_TOKEN_KEY, 'some-token');
     useAuthStore.setState({
       user: { uid: 'user-1' } as any,
       oAuthAccessToken: 'some-token',
@@ -68,7 +68,7 @@ describe('Auth store', () => {
 
     await useAuthStore.getState().logout();
 
-    expect(sessionStorage.getItem(OAUTH_TOKEN_KEY)).toBeNull();
+    expect(localStorage.getItem(OAUTH_TOKEN_KEY)).toBeNull();
     expect(useAuthStore.getState().oAuthAccessToken).toBeNull();
     expect(useAuthStore.getState().user).toBeNull();
   });
@@ -80,8 +80,8 @@ describe('Auth store', () => {
     expect(token).toBe('oauth-token-from-memory');
   });
 
-  it('getAccessToken revisa sessionStorage si no hay token en memoria', async () => {
-    sessionStorage.setItem(OAUTH_TOKEN_KEY, 'stored-token');
+  it('getAccessToken revisa localStorage si no hay token en memoria', async () => {
+    localStorage.setItem(OAUTH_TOKEN_KEY, 'stored-token');
 
     const token = await useAuthStore.getState().getAccessToken();
     expect(token).toBe('stored-token');
