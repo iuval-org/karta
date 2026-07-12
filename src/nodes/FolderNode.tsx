@@ -567,6 +567,8 @@ function FolderNode({ id, data, selected }: NodeProps) {
               onPointerDown={handleResizePointerDown}
               onPointerMove={handleResizePointerMove}
               onPointerUp={handleResizePointerUp}
+              onClick={(e) => e.stopPropagation()}
+              onDoubleClick={(e) => e.stopPropagation()}
               className="absolute bottom-0 right-0 w-5 h-5 cursor-nwse-resize z-50"
               style={{
                 background: 'linear-gradient(135deg, transparent 50%, #9ca3af 50%)',
