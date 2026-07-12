@@ -81,7 +81,15 @@ function FolderNode({ id, data, selected }: NodeProps) {
     resizeStart.current = { x: e.clientX, y: e.clientY, w: rect.width, h: rect.height };
     // Track the last-applied size so we skip no-op updates
     resizeLastApplied.current = { w: rect.width, h: rect.height };
-  }, []);
+
+    // Force the store's node dimensions to match the DOM. Without this,
+    // ReactFlow's internal store may carry stale collapsed dimensions
+    // (from toggleFolder CLOSE) that haven't been reconciled with the
+    // expanded size yet. When the node re-renders on selection or
+    // dimension change, containerStyle would use the stale values and
+    // the folder visually shrinks.
+    setExpandedFolderDims(id, Math.round(rect.width), Math.round(rect.height));
+  }, [id, setExpandedFolderDims]);
 
   const handleResizePointerMove = useCallback((e: React.PointerEvent) => {
     if (!isResizing.current) return;
