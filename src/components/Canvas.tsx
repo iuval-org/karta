@@ -27,7 +27,7 @@ import { useAuthStore } from '../stores/authStore';
 import { useToastStore } from '../stores/toastStore';
 import { useNavigationStore } from '../stores/navigationStore';
 import { useRootStore } from '../stores/rootStore';
-import { createItem, CREATE_MIME_TYPES, trashItems } from '../services/drive';
+import { createItem, CREATE_MIME_TYPES } from '../services/drive';
 import ConfirmModal from './ConfirmModal';
 
 const nodeTypes = {
@@ -451,38 +451,15 @@ function Flow() {
 
     setIsTrashing(true);
     try {
-      const { success, failed } = await trashItems(ids);
+      // removeItems pushes delete operations to the queue and updates local state
+      removeItems(ids);
 
-      if (success.length > 0) {
-        removeItems(success);
-
-        const refresh = useCanvasStore.getState().refreshCurrentFolder;
-        if (refresh) {
-          refresh().catch(() => {});
-        }
-      }
-
-      if (success.length === 1) {
-        const item = useCanvasStore.getState().allItems.find((i) => i.id === success[0]);
-        useToastStore.getState().addToast({
-          type: 'success',
-          message: item
-            ? `${item.name} movido a la papelera`
-            : 'Elemento movido a la papelera',
-        });
-      } else if (success.length > 1) {
-        useToastStore.getState().addToast({
-          type: 'success',
-          message: `${success.length} archivos movidos a la papelera`,
-        });
-      }
-
-      if (failed.length > 0) {
-        useToastStore.getState().addToast({
-          type: 'error',
-          message: `${failed.length} archivo(s) no se pudieron eliminar. Reintentá.`,
-        });
-      }
+      useToastStore.getState().addToast({
+        type: 'success',
+        message: ids.length === 1
+          ? 'Elemento movido a la papelera'
+          : `${ids.length} archivos movidos a la papelera`,
+      });
     } catch (err) {
       console.error('[trash] Error:', err);
       useToastStore.getState().addToast({

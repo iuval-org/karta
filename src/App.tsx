@@ -9,6 +9,7 @@ import { usePreferencesStore } from './stores/preferencesStore';
 import { useNavigationStore } from './stores/navigationStore';
 import { initConnectivityListeners } from './stores/connectivityStore';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { operationQueue } from './services/operationQueue';
 import AuthLayout from './layouts/AuthLayout';
 import AppLayout from './layouts/AppLayout';
 import RootPicker from './components/RootPicker';
@@ -53,6 +54,10 @@ function AppContent() {
       loadPreferences();
       // Initialize Firestore real-time sync for multi-device position sync
       useCanvasStore.getState().initFirestoreSync();
+      // Resume any pending Drive operations from Dexie
+      operationQueue.resumeFromStorage().catch((err) => {
+        console.warn('[App] Error resuming operation queue:', err);
+      });
     }
 
     // Clean up Firestore subscription on logout

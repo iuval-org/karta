@@ -15,7 +15,7 @@ import {
 } from '@xyflow/react';
 import type { DriveItem } from '../types/drive';
 import { listChildren, listAllChildren, getUseMock, createItem } from '../services/drive';
-import { moveItem, renameItem } from '../services/drive';
+import { operationQueue } from '../services/operationQueue';
 import { MOCK_ITEMS } from '../data/mockDriveItems';
 import { calcGridLayout } from '../utils/layout';
 import { debounce } from '../utils/debounce';
@@ -917,28 +917,26 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         // At this point we know currentParentId !== rootFolderId
         // (handled by early return above), so this is a real move.
         const rootId = rootFolderId || '';
-        try {
-          await moveItem(node.id, rootId, currentParentId);
+        // ── Optimistic local update + queue Drive API call ──────
+        const updatedItems = state.allItems.map((item) =>
+          item.id === node.id
+            ? { ...item, parentId: undefined }
+            : item,
+        );
 
-          // Update local state
-          const updatedItems = state.allItems.map((item) =>
-            item.id === node.id
-              ? { ...item, parentId: undefined }
-              : item,
-          );
+        set({ allItems: updatedItems });
+        useToastStore.getState().addToast({
+          type: 'success',
+          message: 'Movido a la raíz',
+        });
 
-          set({ allItems: updatedItems });
-          useToastStore.getState().addToast({
-            type: 'success',
-            message: 'Movido a la raíz',
-          });
-        } catch (err) {
+        operationQueue.push({
+          type: 'move',
+          fileId: node.id,
+          payload: { newParentId: rootId || '', oldParentId: currentParentId || '' },
+        }).catch((err) => {
           console.error('[onNodeDragStop] Error moving to root:', err);
-          useToastStore.getState().addToast({
-            type: 'error',
-            message: 'No se pudo mover. Reintentá.',
-          });
-        }
+        });
       }
     }
 
@@ -1003,20 +1001,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       }
     }
 
-    // ── Drive API call ──────────────────────────────────────────
-    try {
-      await moveItem(itemId, targetFolderId, oldParentId);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Error al mover archivo';
-      useToastStore.getState().addToast({
-        type: 'error',
-        message: 'No se pudo mover. Reintentá.',
-      });
-      console.error('[moveItemToFolder] API error:', message);
-      return false;
-    }
-
-    // ── Update local state (just allItems — nodes stay root-level) ──
+    // ── Optimistic local update + queue Drive API call ─────────
     const updatedItems = state.allItems.map((item) => {
       if (item.id === itemId) {
         return { ...item, parentId: targetFolderId };
@@ -1041,6 +1026,19 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     set({
       nodes: updatedNodes,
       allItems: updatedItems,
+    });
+
+    // Queue the Drive API call (non-blocking)
+    operationQueue.push({
+      type: 'move',
+      fileId: itemId,
+      payload: { newParentId: targetFolderId, oldParentId: oldParentId || '' },
+    }).catch((err) => {
+      console.error('[moveItemToFolder] API error:', err);
+      useToastStore.getState().addToast({
+        type: 'error',
+        message: 'No se pudo mover. Reintentá.',
+      });
     });
 
     // ── Persist to Dexie ────────────────────────────────────
@@ -1223,17 +1221,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   renameNodeItem: async (fileId: string, newName: string) => {
     const { allItems, nodes } = get();
 
-    try {
-      await renameItem(fileId, newName);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Error al renombrar';
-      useToastStore.getState().addToast({
-        type: 'error',
-        message,
-      });
-      return false;
-    }
-
+    // ── Optimistic local update ────────────────────────────
     const updatedItems = allItems.map((item) => {
       if (item.id === fileId) {
         return { ...item, name: newName };
@@ -1255,6 +1243,20 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     });
 
     set({ allItems: updatedItems, nodes: updatedNodes });
+
+    // ── Queue the Drive API call (non-blocking) ────────────
+    operationQueue.push({
+      type: 'rename',
+      fileId,
+      payload: { newName },
+    }).catch((err) => {
+      const message = err instanceof Error ? err.message : 'Error al renombrar';
+      useToastStore.getState().addToast({
+        type: 'error',
+        message,
+      });
+      console.error('[renameNodeItem] API error:', message);
+    });
 
     const state = get();
     debouncedPersist(
@@ -1380,6 +1382,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         stateAfterRemove.expandedFolders,
         persistenceScope(stateAfterRemove.activeTabId, stateAfterRemove.currentFolderId),
       );
+
+      // 3. Queue Drive delete operations (non-blocking)
+      for (const fileId of toRemove) {
+        operationQueue.push({
+          type: 'delete',
+          fileId,
+          payload: {},
+        }).catch((err) => {
+          console.error(`[removeItems] Delete failed for ${fileId}:`, err);
+        });
+      }
     }, 300);
   },
 
@@ -1516,25 +1529,23 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         state.currentFolderId || useRootStore.getState().rootFolderId || 'root',
       );
 
-      // 2. Move all selected items into the new folder
-      const results = await Promise.allSettled(
-        nodeIds.map((itemId) => {
-          const item = state.allItems.find((i) => i.id === itemId);
-          const oldParentId = item?.parentId ?? '';
-          return moveItem(itemId, newFolder.id, oldParentId);
-        }),
-      );
-
+      // 2. Move all selected items into the new folder via queue
       const succeeded: string[] = [];
-      let failedCount = 0;
-      results.forEach((result, i) => {
-        if (result.status === 'fulfilled') {
-          succeeded.push(nodeIds[i]);
-        } else {
-          failedCount++;
-          console.error(`[groupInFolder] Failed to move ${nodeIds[i]}:`, result.reason);
-        }
-      });
+      for (const itemId of nodeIds) {
+        const item = state.allItems.find((i) => i.id === itemId);
+        const oldParentId = item?.parentId ?? '';
+        succeeded.push(itemId); // optimistic — all succeed until proven otherwise
+        operationQueue.push({
+          type: 'move',
+          fileId: itemId,
+          payload: { newParentId: newFolder.id, oldParentId },
+        }).catch((err) => {
+          console.error(`[groupInFolder] Failed to move ${itemId}:`, err);
+          // Remove from succeeded on failure
+          const idx = succeeded.indexOf(itemId);
+          if (idx >= 0) succeeded.splice(idx, 1);
+        });
+      }
 
       // 3. Update local state
       const updatedItems = state.allItems.map((item) => {
@@ -1594,9 +1605,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
       useToastStore.getState().addToast({
         type: 'success',
-        message: failedCount > 0
-          ? `Carpeta creada. ${succeeded.length} archivos movidos, ${failedCount} fallaron.`
-          : `Carpeta \"${folderName}\" creada con ${succeeded.length} archivos ✅`,
+        message: `Carpeta "${folderName}" creada con ${succeeded.length} archivos ✅`,
       });
 
       return newFolder;
