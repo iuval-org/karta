@@ -660,22 +660,39 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         nodes: updatedNodes,
       });
     } else {
-      // OPEN: mark as expanded (all nodes stay root-level, Canvas
-      // filters visibility). Set explicit zIndex: 2000 on children
-      // so they render on top of the folder regardless of array order
-      // or selection state. Also reorder children to end of array.
-      const { nodes, allItems } = get();
+      // OPEN: mark as expanded. Restore saved (or default) expanded
+      // dimensions on the folder node so ReactFlow's wrapper matches
+      // the expanded content size immediately — no flicker from stale
+      // collapsed dimensions leftover from toggleFolder CLOSE.
+      const { nodes, allItems, expandedFolderDims } = get();
+      const saved = expandedFolderDims[folderId];
+      const expW = saved?.width ?? 640;
+      const expH = saved?.height ?? 320;
       const childIds = allItems
         .filter((item) => item.parentId === folderId)
         .map((item) => item.id);
       let reorderedNodes = nodes;
       if (childIds.length > 0) {
         const childSet = new Set(childIds);
-        const otherNodes = nodes.filter((n) => !childSet.has(n.id));
+        const otherNodes = nodes
+          .filter((n) => !childSet.has(n.id))
+          .map((n) => {
+            if (n.id === folderId) {
+              return { ...n, width: expW, height: expH, measured: { width: expW, height: expH } } as Node<CanvasNodeData>;
+            }
+            return n;
+          });
         const childNodes = nodes
           .filter((n) => childSet.has(n.id))
           .map((n) => ({ ...n, zIndex: 2000 } as Node<CanvasNodeData>));
         reorderedNodes = [...otherNodes, ...childNodes];
+      } else {
+        // No children, just restore expanded dims on the folder
+        reorderedNodes = nodes.map((n) =>
+          n.id === folderId
+            ? ({ ...n, width: expW, height: expH, measured: { width: expW, height: expH } } as Node<CanvasNodeData>)
+            : n,
+        );
       }
       set({
         expandedFolders: { ...expandedFolders, [folderId]: true },
