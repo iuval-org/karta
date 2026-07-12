@@ -100,6 +100,15 @@ interface CanvasState {
    */
   folderDragChildren: Record<string, string[]>;
 
+  /**
+   * Stores the original positions of children at drag start for each folder.
+   * Key: folder ID, Value: map of child ID → original {x, y}.
+   * Used in onNodeDragStop to set final child positions as `origin + delta`
+   * rather than `current + delta`, preventing double-movement when children
+   * were also moved during drag (e.g. multi-selection drag in Canvas).
+   */
+  folderDragChildOrigins: Record<string, Record<string, { x: number; y: number }>>;
+
   /** Pan mode: when true, drag moves the canvas (pan) instead of selecting. */
   panMode: boolean;
   /** Enable or disable pan mode. */
@@ -366,6 +375,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   pendingTrashItemIds: [],
   folderDragOrigins: {},
   folderDragChildren: {},
+  folderDragChildOrigins: {},
   panMode: typeof window !== 'undefined' && navigator.maxTouchPoints > 0,
   isSyncing: false,
   _firestoreUnsubscribe: null,
@@ -894,11 +904,29 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         width: (storeNode as any)?.width ?? (storeNode as any)?.measured?.width ?? (node as any).width ?? undefined,
         height: (storeNode as any)?.height ?? (storeNode as any)?.measured?.height ?? (node as any).height ?? undefined,
       };
+
+      // Capture children's original positions so onNodeDragStop can set
+      // final positions as `origin + delta` instead of `current + delta`.
+      // This prevents double-movement when children are also moved during
+      // drag (e.g. multi-selection drag in Canvas.tsx).
+      const allNodes = get().nodes;
+      const childOrigins: Record<string, { x: number; y: number }> = {};
+      for (const childId of childIds) {
+        const childNode = allNodes.find(n => n.id === childId);
+        if (childNode) {
+          childOrigins[childId] = { x: childNode.position.x, y: childNode.position.y };
+        }
+      }
+
       set({
         folderDragOrigins: origins,
         folderDragChildren: {
           ...state.folderDragChildren,
           [node.id]: childIds,
+        },
+        folderDragChildOrigins: {
+          ...state.folderDragChildOrigins,
+          [node.id]: childOrigins,
         },
       });
     }
@@ -938,18 +966,22 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
         if (!isResize && (Math.abs(dx) > 5 || Math.abs(dy) > 5)) {
           const { nodes } = get();
+          const childOrigins = state.folderDragChildOrigins[node.id];
           // Always move children by the drag delta so they keep their
           // relative position — even when the folder is collapsed and
-          // children are hidden. Otherwise they stay behind and show up
-          // in the wrong spot when the folder is expanded later.
+          // children are hidden. Use child origins captured at drag start
+          // to compute final positions, not current positions. This avoids
+          // double-movement when children were also shifted during drag
+          // (e.g. by the multi-selection handler in Canvas.tsx).
           const childSet = new Set(childIds);
           const updatedNodes = nodes.map((n) => {
             if (childSet.has(n.id)) {
+              const childOrigin = childOrigins?.[n.id];
               return {
                 ...n,
                 position: {
-                  x: n.position.x + dx,
-                  y: n.position.y + dy,
+                  x: (childOrigin?.x ?? n.position.x) + dx,
+                  y: (childOrigin?.y ?? n.position.y) + dy,
                 },
               };
             }
@@ -971,9 +1003,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       // Clean up drag state
       const { [node.id]: _, ...restOrigins } = state.folderDragOrigins;
       const { [node.id]: __, ...restChildren } = state.folderDragChildren;
+      const { [node.id]: ___, ...restChildOrigins } = state.folderDragChildOrigins;
       set({
         folderDragOrigins: restOrigins,
         folderDragChildren: restChildren,
+        folderDragChildOrigins: restChildOrigins,
       });
     }
 
