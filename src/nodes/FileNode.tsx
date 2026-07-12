@@ -6,7 +6,8 @@ import {
   useEffect,
   type MouseEvent,
 } from 'react';
-import { Handle, Position, type NodeProps } from '@xyflow/react';
+import { createPortal } from 'react-dom';
+import { Handle, Position, useStore, type NodeProps } from '@xyflow/react';
 import type { CanvasNodeData } from '../stores/canvasStore';
 import { useCanvasStore } from '../stores/canvasStore';
 import { getFileTypeIcon } from '../types/mime';
@@ -299,6 +300,13 @@ function FileNode({ id, data, selected }: NodeProps) {
     };
   }, [ctxMenu, closeCtx]);
 
+  /* close context menu on viewport change (zoom / pan) */
+  const transform = useStore((s) => s.transform);
+  useEffect(() => {
+    closeCtx();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [transform[0], transform[1], transform[2]]);
+
   /* ── available connection targets ───────────────────────────── */
   const connectTargets = nodes
     .filter((n) => n.id !== id && !n.parentId)
@@ -424,10 +432,10 @@ function FileNode({ id, data, selected }: NodeProps) {
       </div>
 
       {/* ── context menu ── */}
-      {ctxMenu && !connectMenu && !isMultiSelected && (
+      {ctxMenu && !connectMenu && !isMultiSelected && createPortal(
         <div
           ref={ctxRef}
-          className="fixed z-50 min-w-[180px] bg-white border border-gray-200 rounded-lg shadow-lg py-1 motion-safe:animate-fade-in-up"
+          className="fixed z-50 min-w-[180px] bg-white border border-gray-200 rounded-lg shadow-lg py-1 motion-safe:animate-fade-in"
           style={{ left: ctxMenu.x, top: ctxMenu.y }}
         >
           <button
@@ -535,14 +543,15 @@ function FileNode({ id, data, selected }: NodeProps) {
             </svg>
             Enviar atrás
           </button>
-        </div>
+        </div>,
+        document.body,
       )}
 
       {/* ── batch context menu (multi-select) ── */}
-      {ctxMenu && !connectMenu && isMultiSelected && (
+      {ctxMenu && !connectMenu && isMultiSelected && createPortal(
         <div
           ref={ctxRef}
-          className="fixed z-50 min-w-[200px] bg-white border border-gray-200 rounded-lg shadow-lg py-1 motion-safe:animate-fade-in-up"
+          className="fixed z-50 min-w-[200px] bg-white border border-gray-200 rounded-lg shadow-lg py-1 motion-safe:animate-fade-in"
           style={{ left: ctxMenu.x, top: ctxMenu.y }}
         >
           <div className="px-3 py-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider">
@@ -615,14 +624,15 @@ function FileNode({ id, data, selected }: NodeProps) {
             </svg>
             Limpiar selección
           </button>
-        </div>
+        </div>,
+        document.body,
       )}
 
       {/* ── connect target list ── */}
-      {ctxMenu && connectMenu && (
+      {ctxMenu && connectMenu && createPortal(
         <div
           ref={ctxRef}
-          className="fixed z-50 min-w-[200px] max-h-[260px] overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg py-1 motion-safe:animate-fade-in-up"
+          className="fixed z-50 min-w-[200px] max-h-[260px] overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg py-1 motion-safe:animate-fade-in"
           style={{ left: ctxMenu.x, top: ctxMenu.y }}
         >
           <div className="px-3 py-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider">
@@ -660,7 +670,8 @@ function FileNode({ id, data, selected }: NodeProps) {
           >
             ← Volver
           </button>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
