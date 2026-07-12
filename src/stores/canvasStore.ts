@@ -630,11 +630,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const currentlyOpen = expandedFolders[folderId] ?? false;
 
     if (currentlyOpen) {
-      // CLOSE: remove from expandedFolders. Set collapsed width (180)
-      // and strip expanded height + measured so ReactFlow re-measures
-      // the collapsed height from the DOM. Keep expandedFolderDims
-      // intact so the saved expanded size persists across collapse/
-      // re-expand. Clear zIndex from children.
+      // CLOSE: remove from expandedFolders. Set collapsed dimensions
+      // so the mini-map shows correct size immediately (the onNodesChange
+      // guard now ignores collapsed folders, so this sticks). Keep
+      // expandedFolderDims intact for re-expand. Clear zIndex from children.
       const next = { ...expandedFolders };
       delete next[folderId];
 
@@ -644,12 +643,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       );
       const updatedNodes = nodes.map((n) => {
         if (n.id === folderId) {
-          // Set collapsed width (matching containerStyle). Strip height
-          // and measured so ReactFlow measures the auto-height from the
-          // DOM. This avoids the flicker that happens when stripping all
-          // dimensions at once (node briefly has undefined size).
-          const { width: _w, height: _h, measured: _m, ...rest } = n as any;
-          return { ...rest, width: 180 };
+          // Set collapsed size: width 180 (matching containerStyle) and
+          // approximate height for the card layout (icon + name + meta).
+          return { ...n, width: 180, height: 170, measured: { width: 180, height: 170 } };
         }
         if (childIds.has(n.id)) {
           // Clear elevated zIndex set during expand
@@ -754,14 +750,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       // `setAttributes: true` which overwrites user-set width/height.
       // Stale callbacks (from during a drag) can fire after our
       // setExpandedFolderDims, snapping the folder back to an intermediate
-      // or old size. Restore expanded-folder dimensions from our store.
+      // or old size. Restore expanded-folder dimensions from our store,
+      // but ONLY for folders that are currently expanded — collapsed
+      // folders should keep their measured collapsed size.
       const hasDimChanges = changes.some((c) => c.type === 'dimensions');
       if (hasDimChanges) {
         const dims = get().expandedFolderDims;
         if (Object.keys(dims).length > 0) {
+          const expanded = get().expandedFolders;
           updated = updated.map((n) => {
             const saved = dims[n.id];
-            if (saved) {
+            if (saved && expanded[n.id]) {
               return { ...n, width: saved.width, height: saved.height, measured: { width: saved.width, height: saved.height } };
             }
             return n;
