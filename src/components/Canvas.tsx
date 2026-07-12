@@ -579,7 +579,7 @@ function Flow() {
         deleteKeyCode="Delete"
         selectionOnDrag={false}
         multiSelectionKeyCode="Shift"
-        panOnDrag={true}
+        panOnDrag={[1]}
         onSelectionChange={(params: { nodes: Node[] }) => {
           useCanvasStore.getState().setSelectedNodeIds(params.nodes.map((n) => n.id));
         }}
