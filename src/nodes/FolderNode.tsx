@@ -81,6 +81,8 @@ function FolderNode({ id, data, selected }: NodeProps) {
     resizeStart.current = { x: e.clientX, y: e.clientY, w: rect.width, h: rect.height };
     // Track the last-applied size so we skip no-op updates
     resizeLastApplied.current = { w: rect.width, h: rect.height };
+    // Clear any stale resizeLive from a previous incomplete resize
+    setResizeLive(null);
   }, []);
 
   const handleResizePointerMove = useCallback((e: React.PointerEvent) => {
@@ -119,7 +121,7 @@ function FolderNode({ id, data, selected }: NodeProps) {
       h: rootElRef.current.getBoundingClientRect().height,
     } : { w: rfWidth, h: rfHeight });
     setResizeLive(null);
-    if (Math.abs(finalDims.w - startW) > 2 || Math.abs(finalDims.h - startH) > 2) {
+    if (Math.abs(finalDims.w - startW) > 10 || Math.abs(finalDims.h - startH) > 10) {
       setExpandedFolderDims(resizeNodeId.current, finalDims.w, finalDims.h);
     }
   }, [setExpandedFolderDims, resizeLive, rfWidth, rfHeight]);
