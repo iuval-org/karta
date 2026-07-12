@@ -905,10 +905,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         height: (storeNode as any)?.height ?? (storeNode as any)?.measured?.height ?? (node as any).height ?? undefined,
       };
 
-      // Capture children's original positions so onNodeDragStop can set
-      // final positions as `origin + delta` instead of `current + delta`.
-      // This prevents double-movement when children are also moved during
-      // drag (e.g. multi-selection drag in Canvas.tsx).
+      // Capture children's original positions. Used during drag to keep
+      // children following the folder in real-time, and on drag stop to
+      // compute final positions as `origin + delta` (avoids double-movement
+      // from multi-selection drag in Canvas.tsx).
       const allNodes = get().nodes;
       const childOrigins: Record<string, { x: number; y: number }> = {};
       for (const childId of childIds) {
@@ -918,7 +918,18 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         }
       }
 
+      // Move children to the end of the nodes array so they render on top
+      // of the folder during drag (ReactFlow z-index = array order).
+      let reorderedNodes = allNodes;
+      if (childIds.length > 0) {
+        const childSet = new Set(childIds);
+        const otherNodes = allNodes.filter(n => !childSet.has(n.id));
+        const childNodes = allNodes.filter(n => childSet.has(n.id));
+        reorderedNodes = [...otherNodes, ...childNodes];
+      }
+
       set({
+        nodes: reorderedNodes,
         folderDragOrigins: origins,
         folderDragChildren: {
           ...state.folderDragChildren,
@@ -932,10 +943,28 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }
   },
 
-  onNodeDrag: (_event: unknown, _node: Node) => {
-    // Intentionally empty — ReactFlow handles all node movement including resize
-    // during drag. Children are repositioned in onNodeDragStop to avoid
-    // interfering with ReactFlow's resize logic.
+  onNodeDrag: (_event: unknown, node: Node) => {
+    if (node.type === 'folderNode') {
+      const state = get();
+      const origin = state.folderDragOrigins[node.id];
+      const childIds = state.folderDragChildren[node.id];
+      const childOrigins = state.folderDragChildOrigins[node.id];
+      if (origin && childIds?.length && childOrigins) {
+        const dx = node.position.x - origin.x;
+        const dy = node.position.y - origin.y;
+        const childSet = new Set(childIds);
+        const updatedNodes = get().nodes.map((n) => {
+          if (childSet.has(n.id)) {
+            const co = childOrigins[n.id];
+            if (co) {
+              return { ...n, position: { x: co.x + dx, y: co.y + dy } };
+            }
+          }
+          return n;
+        });
+        set({ nodes: updatedNodes });
+      }
+    }
   },
 
   onNodeDragStop: async (_event: unknown, node: Node) => {
@@ -964,24 +993,40 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           (Math.abs(currentWidth - origin.width) > 3 ||
             Math.abs(currentHeight - origin.height) > 3);
 
-        if (!isResize && (Math.abs(dx) > 5 || Math.abs(dy) > 5)) {
-          const { nodes } = get();
-          const childOrigins = state.folderDragChildOrigins[node.id];
-          // Always move children by the drag delta so they keep their
-          // relative position — even when the folder is collapsed and
-          // children are hidden. Use child origins captured at drag start
-          // to compute final positions, not current positions. This avoids
-          // double-movement when children were also shifted during drag
-          // (e.g. by the multi-selection handler in Canvas.tsx).
-          const childSet = new Set(childIds);
+        const childOrigins = state.folderDragChildOrigins[node.id];
+        const childSet = new Set(childIds);
+        const { nodes } = get();
+
+        if (isResize) {
+          // Resize: snap children BACK to their original positions.
+          // During drag they were moved alongside the folder, but for a
+          // resize operation they should stay put.
+          const updatedNodes = nodes.map((n) => {
+            const co = childOrigins?.[n.id];
+            if (co) return { ...n, position: { x: co.x, y: co.y } };
+            return n;
+          });
+          set({ nodes: updatedNodes });
+
+          const newState = get();
+          debouncedPersist(
+            newState.nodes,
+            newState.edges,
+            newState.expandedFolders,
+            persistenceScope(newState.activeTabId, newState.currentFolderId),
+          );
+        } else if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+          // Drag: children were already positioned during onNodeDrag, but
+          // set final positions using origin + delta to be absolutely correct
+          // (handles edge cases from multi-selection drag).
           const updatedNodes = nodes.map((n) => {
             if (childSet.has(n.id)) {
-              const childOrigin = childOrigins?.[n.id];
+              const co = childOrigins?.[n.id];
               return {
                 ...n,
                 position: {
-                  x: (childOrigin?.x ?? n.position.x) + dx,
-                  y: (childOrigin?.y ?? n.position.y) + dy,
+                  x: (co?.x ?? n.position.x) + dx,
+                  y: (co?.y ?? n.position.y) + dy,
                 },
               };
             }
@@ -989,7 +1034,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           });
           set({ nodes: updatedNodes });
 
-          // Persist after children repositioned
           const newState = get();
           debouncedPersist(
             newState.nodes,
