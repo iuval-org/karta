@@ -881,18 +881,27 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   setExpandedFolderDims: (folderId: string, width: number, height: number) => {
-    set((state) => ({
-      expandedFolderDims: { ...state.expandedFolderDims, [folderId]: { width, height } },
-      // Also update ReactFlow's internal node dimensions so the
-      // wrapper div matches the inner content size. Without this,
-      // ReactFlow keeps a stale collapsed-dimension wrapper that
-      // clips the expanded folder content.
-      nodes: state.nodes.map((n) =>
-        n.id === folderId
-          ? { ...n, width, height, measured: { width, height } }
-          : n,
-      ),
-    }));
+    set((state) => {
+      const childIds = new Set(
+        state.allItems
+          .filter((item) => item.parentId === folderId)
+          .map((item) => item.id),
+      );
+      return {
+        expandedFolderDims: { ...state.expandedFolderDims, [folderId]: { width, height } },
+        // Update the folder node dimensions and ensure children keep
+        // their elevated zIndex so they stay on top of the folder.
+        nodes: state.nodes.map((n) => {
+          if (n.id === folderId) {
+            return { ...n, width, height, measured: { width, height } };
+          }
+          if (childIds.has(n.id) && (n as any).zIndex !== 2000) {
+            return { ...n, zIndex: 2000 };
+          }
+          return n;
+        }),
+      };
+    });
   },
 
   forceRecalcPositions: () => {
