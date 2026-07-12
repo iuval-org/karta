@@ -14,24 +14,21 @@ import {
   MarkerType,
 } from '@xyflow/react';
 import type { DriveItem } from '../types/drive';
-import { listChildren, getUseMock } from '../services/drive';
+import { listChildren, listAllChildren, getUseMock } from '../services/drive';
 import { moveItem, renameItem } from '../services/drive';
 import { MOCK_ITEMS } from '../data/mockDriveItems';
 import { calcGridLayout } from '../utils/layout';
 import { debounce } from '../utils/debounce';
 import { db } from '../services/db';
-import type { NodePosition, StoredEdge, FolderStateRow } from '../services/db';
+import type { NodePosition, StoredEdge } from '../services/db';
 import { useToastStore } from './toastStore';
+import { useRootStore } from './rootStore';
+import { findContainingFolder, getChildrenInFolder } from '../utils/folderBounds';
 
 export interface CanvasNodeData {
   driveItem: DriveItem;
   [key: string]: unknown;
 }
-
-/** Internal grid for children inside an open folder (3 cols, small gap). */
-const CHILD_COLS = 3;
-const CHILD_GAP_X = 210;
-const CHILD_GAP_Y = 150;
 
 interface CanvasState {
   nodes: Node<CanvasNodeData>[];
@@ -43,16 +40,14 @@ interface CanvasState {
   errorType: 'connection' | 'auth' | 'rate-limit' | 'unknown' | null;
   layout: 'grid' | 'free';
 
-  /** All items (root + children), populated at load time. */
+  /** All items (all levels), populated at load time. */
   allItems: DriveItem[];
-  /** Which folders are currently open. */
-  folderOpenState: Record<string, boolean>;
-  /** Persisted dimensions for open folder containers. */
-  folderDimensions: Record<string, { width: number; height: number }>;
-  /** Saved relative positions of children inside a folder so they survive close/re-open. */
-  folderChildPositions: Record<string, Record<string, { x: number; y: number }>>;
-  /** Viewport pan/zoom state per open folder (for internal mini-canvas). */
-  folderViewportState: Record<string, { panX: number; panY: number; zoom: number }>;
+  /**
+   * Which folders are currently expanded (open).
+   * All nodes are root-level in ReactFlow; folder membership is determined
+   * by bounds checking (position inside folder bounding box).
+   */
+  expandedFolders: Record<string, boolean>;
   /** Active tab ID for persistence. */
   activeTabId: string;
 
@@ -70,6 +65,17 @@ interface CanvasState {
 
   /** IDs of items pending trash confirmation (to show ConfirmModal in Canvas). */
   pendingTrashItemIds: string[];
+
+  /** Stores the ORIGINAL position + dimensions of a folder node at drag start. Used in onNodeDrag to distinguish real drags (position changes >5px) from resize operations (dimension changes >5px). */
+  folderDragOrigins: Record<string, { x: number; y: number; width: number; height: number }>;
+
+  /**
+   * Stores the list of child IDs captured at drag start for each folder.
+   * Used in onNodeDrag to only move children that were inside the folder
+   * when the drag began, rather than recalculating bounds in real time
+   * (which would pick up items newly overlapped by a resized folder).
+   */
+  folderDragChildren: Record<string, string[]>;
 
   /** Pan mode: when true, drag moves the canvas (pan) instead of selecting. */
   panMode: boolean;
@@ -93,9 +99,6 @@ interface CanvasState {
   loadItems: (folderId: string) => Promise<void>;
   setCurrentFolderId: (folderId: string) => void;
   toggleFolder: (folderId: string) => void;
-  updateFolderDimensions: (folderId: string, dimensions: { width: number; height: number }) => void;
-  updateFolderViewport: (folderId: string, viewport: { panX: number; panY: number; zoom: number }) => void;
-  resetFolderViewport: (folderId: string) => void;
   resetLayout: () => void;
   applyGridLayout: () => void;
   onNodesChange: OnNodesChange;
@@ -148,23 +151,37 @@ interface CanvasState {
   toggleNodeSelection: (id: string) => void;
   /** Clear all selection. */
   clearSelection: () => void;
+
+  /**
+   * Called on every drag move to update child positions alongside the folder.
+   * Also tracks folder hover target for visual feedback.
+   */
+  onNodeDrag: (_event: unknown, node: Node) => void;
+
+  /**
+   * Called when drag starts: records the folder's origin position
+   * to distinguish real drags from resize operations.
+   */
+  onNodeDragStart: (_event: unknown, node: Node) => void;
+
+  /**
+   * Called when drag ends: detect if item was dropped inside/outside a folder
+   * and sync to Drive accordingly.
+   */
+  onNodeDragStop: (_event: unknown, node: Node) => void;
+
+  /**
+   * Move a node to the front of the z-order (end of nodes array).
+   */
+  bringToFront: (nodeId: string) => void;
+
+  /**
+   * Move a node to the back of the z-order (start of nodes array).
+   */
+  sendToBack: (nodeId: string) => void;
 }
 
 /* ── helpers ─────────────────────────────────────────────────── */
-
-/** Default child positions inside a folder (3-column grid). */
-function defaultChildPositions(
-  children: DriveItem[],
-): Record<string, { x: number; y: number }> {
-  const map: Record<string, { x: number; y: number }> = {};
-  children.forEach((child, i) => {
-    map[child.id] = {
-      x: (i % CHILD_COLS) * CHILD_GAP_X + 12,
-      y: Math.floor(i / CHILD_COLS) * CHILD_GAP_Y + 12,
-    };
-  });
-  return map;
-}
 
 /**
  * Check recursively if `candidateId` is a descendant of `parentId`
@@ -190,7 +207,7 @@ function checkIsDescendant(
  * When navigating inside a folder, scope positions to `${tabId}/${folderId}`.
  * For root view, just use the tabId.
  */
-function persistenceScope(activeTabId: string, currentFolderId: string): string {
+export function persistenceScope(activeTabId: string, currentFolderId: string): string {
   return currentFolderId ? `${activeTabId}/${currentFolderId}` : activeTabId;
 }
 
@@ -200,56 +217,32 @@ const debouncedPersist = debounce(
   async (
     nodes: Node<CanvasNodeData>[],
     edges: Edge[],
-    folderOpenState: Record<string, boolean>,
-    folderDimensions: Record<string, { width: number; height: number }>,
-    folderChildPositions: Record<string, Record<string, { x: number; y: number }>>,
-    folderViewportState: Record<string, { panX: number; panY: number; zoom: number }>,
+    expandedFolders: Record<string, boolean>,
     tabId: string,
   ) => {
     const dbOperations: Promise<unknown>[] = [];
 
-    /* Positions: root-level nodes + child nodes currently on canvas */
-    const rootNodePositions: NodePosition[] = nodes
-      .filter((n) => !n.parentId)
-      .map((n) => ({
-        fileId: n.id,
-        x: n.position.x,
-        y: n.position.y,
-        tabId,
-      }));
+    /* Positions: all nodes (all root-level now) */
+    const rootNodePositions: NodePosition[] = nodes.map((n) => ({
+      fileId: n.id,
+      x: n.position.x,
+      y: n.position.y,
+      tabId,
+    }));
+    console.log('[PERSIST] saving positions:', {
+      scope: tabId,
+      positionsCount: rootNodePositions.length,
+      nodes: rootNodePositions.map(p => `${p.fileId}:(${p.x},${p.y})`),
+    });
     dbOperations.push(db.positions.bulkPut(rootNodePositions));
 
-    /* Child positions of closed folders (from folderChildPositions) */
-    const childPositions: NodePosition[] = [];
-    for (const [, children] of Object.entries(folderChildPositions)) {
-      for (const [childId, pos] of Object.entries(children)) {
-        childPositions.push({
-          fileId: childId,
-          x: pos.x,
-          y: pos.y,
-          tabId,
-        });
-      }
-    }
-    if (childPositions.length > 0) {
-      dbOperations.push(db.positions.bulkPut(childPositions));
-    }
-
-    /* Folder states */
-    const fStates: FolderStateRow[] = Object.entries(folderOpenState).map(
-      ([folderId, isOpen]) => {
-        const vp = folderViewportState[folderId];
-        return {
-          folderId,
-          isOpen,
-          width: folderDimensions[folderId]?.width ?? 640,
-          height: folderDimensions[folderId]?.height ?? 320,
-          tabId,
-          viewportPanX: vp?.panX,
-          viewportPanY: vp?.panY,
-          viewportZoom: vp?.zoom,
-        } as FolderStateRow;
-      },
+    /* Folder states (just expanded/not expanded, no dimensions/viewport) */
+    const fStates = Object.entries(expandedFolders).map(
+      ([folderId, isOpen]) => ({
+        folderId,
+        isOpen,
+        tabId,
+      }),
     );
     if (fStates.length > 0) {
       dbOperations.push(db.folderState.bulkPut(fStates));
@@ -268,6 +261,7 @@ const debouncedPersist = debounce(
     }
 
     await Promise.all(dbOperations);
+    console.log('[PERSIST] save completed');
   },
   500,
 );
@@ -285,16 +279,15 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   layout: 'grid',
 
   allItems: [],
-  folderOpenState: {},
-  folderDimensions: {},
-  folderChildPositions: {},
-  folderViewportState: {},
+  expandedFolders: {},
   activeTabId: 'root',
   searchHighlightedNodeIds: [],
   currentFolderId: '',
   folderHoverTarget: null,
   removingNodeIds: [],
   pendingTrashItemIds: [],
+  folderDragOrigins: {},
+  folderDragChildren: {},
   panMode: typeof window !== 'undefined' && navigator.maxTouchPoints > 0,
 
   /* ── load ──────────────────────────────────────────────────── */
@@ -308,23 +301,27 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       if (getUseMock()) {
         items = MOCK_ITEMS;
       } else {
-        items = await listChildren(folderId);
+        // At root view, load ALL items recursively so all saved positions
+        // match existing nodes. When navigating inside a folder, only load
+        // that folder's direct children.
+        const rootFolderId = useRootStore.getState().rootFolderId;
+        const loadingRoot = !folderId || folderId === 'root' || folderId === rootFolderId;
+        if (loadingRoot) {
+          items = await listAllChildren(folderId || 'root');
+        } else {
+          items = await listChildren(folderId);
+        }
       }
 
       // Filter root-level items based on folder context.
-      // For root view:
-      //   - Mock mode: items with NO parentId are root-level (mock data convention).
-      //   - Real Drive API: the query already filtered by "'folderId' in parents",
-      //     so ALL returned items are children of folderId. Keep them all — don't
-      //     filter by !parentId because Drive API always returns parents[] on items
-      //     even at root level (e.g. parents: ['root']).
-      // For navigation into a subfolder: items whose parentId matches the folder.
-      const isRootView = !folderId || folderId === 'root' || getUseMock();
+      const rootFolderId = useRootStore.getState().rootFolderId;
+      const isRootView = !folderId || folderId === 'root' || folderId === rootFolderId || getUseMock();
       const rootItems = isRootView
         ? (getUseMock() ? items.filter((i) => !i.parentId) : items)
         : items.filter((i) => i.parentId === folderId);
 
       const gridNodes = calcGridLayout(rootItems);
+      // All nodes are root-level — no parentId, no extent
       const nodes: Node<CanvasNodeData>[] = gridNodes.map((gn) => ({
         id: gn.id,
         type: gn.data.isFolder ? 'folderNode' : 'fileNode',
@@ -341,17 +338,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         error: null,
         errorType: null,
         layout: 'grid',
-        folderOpenState: {},
-        folderDimensions: {},
-        folderChildPositions: {},
-        folderViewportState: {},
+        expandedFolders: {},
       });
 
       // After initial grid layout, try to hydrate saved state from Dexie
       try {
         await get().hydrateFromDexie();
+        console.log('[LOAD] nodes after hydrate:', get().nodes.length);
       } catch (hydrateErr) {
-        // If hydration fails (e.g. DB schema mismatch), keep grid layout
         console.warn('Hydration from Dexie failed, using grid layout:', hydrateErr);
       }
     } catch (err) {
@@ -379,10 +373,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const currentScope = scope ?? persistenceScope(activeTabId, currentFolderId);
 
     const [savedPositions, savedEdges, savedFolderStates] = await Promise.all([
-      db.positions.where('tabId').equals(currentScope).toArray(),
-      db.edges.where('tabId').equals(currentScope).toArray(),
-      db.folderState.where('tabId').equals(currentScope).toArray(),
+      db.positions.filter(p => p.tabId === currentScope).toArray(),
+      db.edges.filter(e => e.tabId === currentScope).toArray(),
+      db.folderState.filter(fs => fs.tabId === currentScope).toArray(),
     ]);
+
+    console.log('[HYDRATE] checking scope:', currentScope);
+    console.log('[HYDRATE] savedPositions found:', savedPositions.length);
 
     // If no persisted data, keep grid layout
     if (savedPositions.length === 0 && savedFolderStates.length === 0) {
@@ -393,56 +390,22 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       savedPositions.map((p) => [p.fileId, { x: p.x, y: p.y }]),
     );
 
-    /* 1. Compile folder state from Dexie */
-    const folderOpenState: Record<string, boolean> = {};
-    const folderDimensions: Record<string, { width: number; height: number }> = {};
+    /* 1. Compile folder expand state from Dexie (simplified — just open/closed) */
+    const expandedFolders: Record<string, boolean> = {};
     for (const fs of savedFolderStates) {
-      folderOpenState[fs.folderId] = fs.isOpen;
-      if (fs.width > 0 && fs.height > 0) {
-        folderDimensions[fs.folderId] = { width: fs.width, height: fs.height };
-      }
+      expandedFolders[fs.folderId] = fs.isOpen;
     }
 
-    /* 2. Rebuild folderChildPositions from saved positions */
-    const childItems = allItems.filter((i) => i.parentId);
-    const folderChildPositions: Record<
-      string,
-      Record<string, { x: number; y: number }>
-    > = {};
-    for (const child of childItems) {
-      const pos = posMap.get(child.id);
-      if (pos) {
-        const fId = child.parentId!;
-        if (!folderChildPositions[fId]) {
-          folderChildPositions[fId] = {};
-        }
-        folderChildPositions[fId][child.id] = pos;
-      }
-    }
-
-    /* 2b. Restore viewport state for open folders */
-    const folderViewportState: Record<string, { panX: number; panY: number; zoom: number }> = {};
-    for (const fs of savedFolderStates) {
-      if (fs.isOpen && (fs.viewportPanX !== undefined || fs.viewportZoom !== undefined)) {
-        folderViewportState[fs.folderId] = {
-          panX: fs.viewportPanX ?? 0,
-          panY: fs.viewportPanY ?? 0,
-          zoom: fs.viewportZoom ?? 1,
-        };
-      }
-    }
-
-    /* 3. Apply saved positions to root-level nodes */
-    const rootNodeIds = new Set(allItems.filter((i) => !i.parentId).map((i) => i.id));
+    /* 2. Apply saved positions to all nodes (all root-level now) */
     const updatedNodes: Node<CanvasNodeData>[] = get().nodes.map((n) => {
       const pos = posMap.get(n.id);
-      if (pos && rootNodeIds.has(n.id)) {
+      if (pos) {
         return { ...n, position: pos };
       }
       return n;
     });
 
-    /* 4. Restore edges */
+    /* 3. Restore edges */
     const edges: Edge[] = savedEdges.map((e) => ({
       id: e.id,
       source: e.source,
@@ -454,89 +417,34 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       nodes: updatedNodes,
       edges,
       layout: 'free',
-      folderOpenState,
-      folderDimensions,
-      folderChildPositions,
-      folderViewportState,
+      expandedFolders,
     });
 
-    /* 5. For folders that were open, create child nodes */
-    const openFolderIds = Object.entries(folderOpenState)
-      .filter(([_, isOpen]) => isOpen)
-      .map(([id]) => id);
-
-    for (const fId of openFolderIds) {
-      const children = allItems.filter((i) => i.parentId === fId);
-      if (children.length === 0) continue;
-
-      const saved = folderChildPositions[fId] ?? {};
-      const defaults = defaultChildPositions(children);
-      const hasSaved = Object.keys(saved).length > 0;
-      const positions = hasSaved ? saved : defaults;
-
-      const childNodes: Node<CanvasNodeData>[] = children.map((item) => ({
-        id: item.id,
-        type: 'fileNode',
-        position: positions[item.id] ?? { x: 12, y: 12 },
-        parentId: fId,
-        extent: 'parent' as const,
-        data: { driveItem: item },
-        deletable: false,
-      }));
-
-      const currentNodes = get().nodes;
-      set({ nodes: [...currentNodes, ...childNodes] });
-    }
+    console.log('[HYDRATE] complete — nodes:', get().nodes.length, 'expanded:', Object.keys(expandedFolders).length);
   },
 
   /* ── persistent save (immediate, not debounced) ───────────── */
 
   persistNow: async () => {
-    const { nodes, edges, folderOpenState, folderDimensions, folderChildPositions, folderViewportState, activeTabId, currentFolderId } =
-      get();
+    const { nodes, edges, expandedFolders, activeTabId, currentFolderId } = get();
     const scope = persistenceScope(activeTabId, currentFolderId);
 
     const dbOps: Promise<unknown>[] = [];
 
-    const rootNodePositions: NodePosition[] = nodes
-      .filter((n) => !n.parentId)
-      .map((n) => ({
-        fileId: n.id,
-        x: n.position.x,
-        y: n.position.y,
+    const allNodePositions: NodePosition[] = nodes.map((n) => ({
+      fileId: n.id,
+      x: n.position.x,
+      y: n.position.y,
+      tabId: scope,
+    }));
+    dbOps.push(db.positions.bulkPut(allNodePositions));
+
+    const fStates = Object.entries(expandedFolders).map(
+      ([folderId, isOpen]) => ({
+        folderId,
+        isOpen,
         tabId: scope,
-      }));
-    dbOps.push(db.positions.bulkPut(rootNodePositions));
-
-    const childPosition: NodePosition[] = [];
-    for (const [, children] of Object.entries(folderChildPositions)) {
-      for (const [childId, pos] of Object.entries(children)) {
-        childPosition.push({
-          fileId: childId,
-          x: pos.x,
-          y: pos.y,
-          tabId: scope,
-        });
-      }
-    }
-    if (childPosition.length > 0) {
-      dbOps.push(db.positions.bulkPut(childPosition));
-    }
-
-    const fStates: FolderStateRow[] = Object.entries(folderOpenState).map(
-      ([fId, isOpen]) => {
-        const vp = folderViewportState[fId];
-        return {
-          folderId: fId,
-          isOpen,
-          width: folderDimensions[fId]?.width ?? 640,
-          height: folderDimensions[fId]?.height ?? 320,
-          tabId: scope,
-          viewportPanX: vp?.panX,
-          viewportPanY: vp?.panY,
-          viewportZoom: vp?.zoom,
-        } as FolderStateRow;
-      },
+      }),
     );
     if (fStates.length > 0) {
       dbOps.push(db.folderState.bulkPut(fStates));
@@ -559,157 +467,40 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   /* ── folder toggle ─────────────────────────────────────────── */
 
   toggleFolder: (folderId: string) => {
-    const { nodes, allItems, folderOpenState, folderChildPositions, folderDimensions, folderViewportState } = get();
-    const currentlyOpen = folderOpenState[folderId] ?? false;
+    const { expandedFolders } = get();
+    const currentlyOpen = expandedFolders[folderId] ?? false;
 
     if (currentlyOpen) {
-      // ── CLOSE ──────────────────────────────────────────────
-      // 1. Save relative positions of children
-      const children = nodes.filter((n) => n.parentId === folderId);
-      const savedPositions: Record<string, { x: number; y: number }> = {};
-      for (const child of children) {
-        savedPositions[child.id] = { ...child.position };
-      }
-
-      // 2. Remove child nodes (they disappear from canvas)
-      const childIds = new Set(children.map((c) => c.id));
-      const remaining = nodes.filter((n) => !childIds.has(n.id));
-
-      const newFolderChildPositions = {
-        ...folderChildPositions,
-        [folderId]: savedPositions,
-      };
-
-      // 3. Clean up viewport state
-      const newViewportState = { ...folderViewportState };
-      delete newViewportState[folderId];
-
-      set({
-        nodes: remaining,
-        folderOpenState: { ...folderOpenState, [folderId]: false },
-        folderChildPositions: newFolderChildPositions,
-        folderViewportState: newViewportState,
-      });
-
-      // Persist to Dexie
-      const state = get();
-      debouncedPersist(
-        state.nodes,
-        state.edges,
-        state.folderOpenState,
-        state.folderDimensions,
-        state.folderChildPositions,
-        state.folderViewportState,
-        persistenceScope(state.activeTabId, state.currentFolderId),
-      );
+      // CLOSE: just remove from expandedFolders
+      const next = { ...expandedFolders };
+      delete next[folderId];
+      set({ expandedFolders: next });
     } else {
-      // ── OPEN ───────────────────────────────────────────────
-      const folderNode = nodes.find((n) => n.id === folderId);
-      if (!folderNode) return;
-
-      // Find child items from the loaded data
-      const childItems = allItems.filter((i) => i.parentId === folderId);
-      if (childItems.length === 0) return;
-
-      // Determine positions: use saved if available, otherwise default grid
-      const saved = folderChildPositions[folderId] ?? {};
-      const hasSaved = Object.keys(saved).length > 0;
-      const positions = hasSaved
-        ? saved
-        : defaultChildPositions(childItems);
-
-      // Create child nodes
-      const childNodes: Node<CanvasNodeData>[] = childItems.map((item) => {
-        const pos = positions[item.id] ?? { x: 12, y: 12 };
-        return {
-          id: item.id,
-          type: 'fileNode',
-          position: pos,
-          parentId: folderId,
-          extent: 'parent' as const,
-          data: { driveItem: item },
-          deletable: false,
-        };
-      });
-
-      // Default folder dimensions if not yet set
-      const dims = folderDimensions[folderId] ?? { width: 640, height: 320 };
-
+      // OPEN: mark as expanded (all nodes stay root-level, Canvas filters visibility)
       set({
-        nodes: [...nodes, ...childNodes],
-        folderOpenState: { ...folderOpenState, [folderId]: true },
-        folderDimensions: { ...folderDimensions, [folderId]: dims },
+        expandedFolders: { ...expandedFolders, [folderId]: true },
       });
-
-      // Persist folder state
-      const state = get();
-      debouncedPersist(
-        state.nodes,
-        state.edges,
-        state.folderOpenState,
-        state.folderDimensions,
-        state.folderChildPositions,
-        state.folderViewportState,
-        persistenceScope(state.activeTabId, state.currentFolderId),
-      );
     }
-  },
 
-  /* ── folder resize ─────────────────────────────────────────── */
-
-  updateFolderDimensions: (folderId: string, dimensions: { width: number; height: number }) => {
-    const { folderDimensions } = get();
-    set({
-      folderDimensions: { ...folderDimensions, [folderId]: dimensions },
-    });
-
-    // Debounced persistence
+    // Persist to Dexie (debounced)
     const state = get();
     debouncedPersist(
       state.nodes,
       state.edges,
-      state.folderOpenState,
-      state.folderDimensions,
-      state.folderChildPositions,
-      state.folderViewportState,
+      state.expandedFolders,
       persistenceScope(state.activeTabId, state.currentFolderId),
     );
-  },
-
-  /* ── folder viewport (pan/zoom) ───────────────────────────── */
-
-  updateFolderViewport: (folderId: string, viewport: { panX: number; panY: number; zoom: number }) => {
-    const { folderViewportState } = get();
-    set({
-      folderViewportState: {
-        ...folderViewportState,
-        [folderId]: viewport,
-      },
-    });
-  },
-
-  resetFolderViewport: (folderId: string) => {
-    const { folderViewportState } = get();
-    const next = { ...folderViewportState };
-    delete next[folderId];
-    set({ folderViewportState: next });
   },
 
   /* ── layout ────────────────────────────────────────────────── */
 
   resetLayout: () => {
-    // Clear saved positions from Dexie
     const { activeTabId, currentFolderId } = get();
     const scope = persistenceScope(activeTabId, currentFolderId);
-    db.positions.where('tabId').equals(scope).delete();
-    db.folderState.where('tabId').equals(scope).delete();
+    db.positions.filter(p => p.tabId === scope).delete();
+    db.folderState.filter(fs => fs.tabId === scope).delete();
 
-    set({
-      folderOpenState: {},
-      folderDimensions: {},
-      folderChildPositions: {},
-      folderViewportState: {},
-    });
+    set({ expandedFolders: {} });
 
     get().applyGridLayout();
   },
@@ -717,18 +508,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   applyGridLayout: () => {
     const { nodes } = get();
 
-    // Only layout root-level nodes (children inside folders keep their relative positions)
-    const rootNodes = nodes.filter((n) => !n.parentId);
-    const rootItems: DriveItem[] = rootNodes.map((n) => n.data.driveItem);
-    const gridNodes = calcGridLayout(rootItems);
+    // All nodes are root-level — layout all of them
+    const items: DriveItem[] = nodes.map((n) => n.data.driveItem);
+    const gridNodes = calcGridLayout(items);
 
-    const rootIds = new Set(rootNodes.map((n) => n.id));
     const updatedNodes: Node<CanvasNodeData>[] = nodes.map((n) => {
-      if (rootIds.has(n.id)) {
-        const grid = gridNodes.find((gn) => gn.id === n.id);
-        if (grid) {
-          return { ...n, position: grid.position };
-        }
+      const grid = gridNodes.find((gn) => gn.id === n.id);
+      if (grid) {
+        return { ...n, position: grid.position };
       }
       return n;
     });
@@ -739,18 +526,30 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   /* ── React Flow handlers ───────────────────────────────────── */
 
   onNodesChange: (changes: NodeChange[]) => {
-    set({ nodes: applyNodeChanges(changes, get().nodes) as Node<CanvasNodeData>[] });
+    // Filter out position changes from NodeResizer (same as before)
+    const hasDimension = new Set(
+      changes
+        .filter((c): c is NodeChange & { type: 'dimensions'; id: string } => c.type === 'dimensions')
+        .map((c) => c.id),
+    );
+    const filtered = changes.filter((c) => {
+      if (c.type === 'position' && hasDimension.has((c as NodeChange & { id: string }).id)) {
+        return false;
+      }
+      return true;
+    });
 
-    // If a position change happened, persist (debounced)
-    if (changes.some((c) => c.type === 'position')) {
+    if (filtered.length > 0) {
+      set({ nodes: applyNodeChanges(filtered, get().nodes) as Node<CanvasNodeData>[] });
+    }
+
+    // If a real position change happened, persist (debounced)
+    if (filtered.some((c) => c.type === 'position')) {
       const state = get();
       debouncedPersist(
         state.nodes,
         state.edges,
-        state.folderOpenState,
-        state.folderDimensions,
-        state.folderChildPositions,
-        state.folderViewportState,
+        state.expandedFolders,
         persistenceScope(state.activeTabId, state.currentFolderId),
       );
     }
@@ -759,23 +558,18 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   onEdgesChange: (changes: EdgeChange[]) => {
     set({ edges: applyEdgeChanges(changes, get().edges) });
 
-    // Persist (debounced) — edge add/remove/replace matter most
     if (changes.some((c) => c.type === 'add' || c.type === 'remove' || c.type === 'replace')) {
       const state = get();
       debouncedPersist(
         state.nodes,
         state.edges,
-        state.folderOpenState,
-        state.folderDimensions,
-        state.folderChildPositions,
-        state.folderViewportState,
+        state.expandedFolders,
         persistenceScope(state.activeTabId, state.currentFolderId),
       );
     }
   },
 
   onConnect: (connection: Connection) => {
-    // Prevent self-connections
     if (connection.source === connection.target) return;
 
     const newEdge: Edge = {
@@ -792,15 +586,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
     set({ edges: addEdge(newEdge, get().edges) });
 
-    // Persist immediately
     const state = get();
     debouncedPersist(
       state.nodes,
       state.edges,
-      state.folderOpenState,
-      state.folderDimensions,
-      state.folderChildPositions,
-      state.folderViewportState,
+      state.expandedFolders,
       persistenceScope(state.activeTabId, state.currentFolderId),
     );
   },
@@ -810,15 +600,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const remaining = edges.filter((e) => !edgeIds.includes(e.id));
     set({ edges: remaining });
 
-    // Persist
     const state = get();
     debouncedPersist(
       state.nodes,
       state.edges,
-      state.folderOpenState,
-      state.folderDimensions,
-      state.folderChildPositions,
-      state.folderViewportState,
+      state.expandedFolders,
       persistenceScope(state.activeTabId, state.currentFolderId),
     );
   },
@@ -864,6 +650,160 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   setFolderHoverTarget: (folderId: string | null) => {
     set({ folderHoverTarget: folderId });
+  },
+
+  /* ── Drag handlers ──────────────────────────────────────────── */
+
+  onNodeDragStart: (_event: unknown, node: Node) => {
+    if (node.type === 'folderNode') {
+      const state = get();
+      const nodeSizes = new Map<string, { width: number; height: number }>();
+      for (const n of state.nodes) {
+        const size = (n as any).measured ?? { width: 180, height: 170 };
+        nodeSizes.set(n.id, size);
+      }
+      const children = getChildrenInFolder(node.id, state.nodes, nodeSizes);
+      const measured = (node as any).measured ?? {};
+      const origins = { ...state.folderDragOrigins } as Record<string, { x: number; y: number; width: number; height: number }>;
+      origins[node.id] = {
+        x: node.position.x,
+        y: node.position.y,
+        width: measured.width ?? 640,
+        height: measured.height ?? 320,
+      };
+      set({
+        folderDragOrigins: origins,
+        folderDragChildren: {
+          ...state.folderDragChildren,
+          [node.id]: children.map((c) => c.id),
+        },
+      });
+    }
+  },
+
+  onNodeDrag: (_event: unknown, node: Node) => {
+    if (node.type === 'folderNode') {
+      const origin = get().folderDragOrigins[node.id];
+      const childIds = get().folderDragChildren[node.id];
+      if (!origin || !childIds) return;
+
+      // ── Detect resize: if dimensions changed >5px, this is a resize, not a drag ──
+      const measured = (node as any).measured ?? {};
+      const curWidth = measured.width ?? 640;
+      const curHeight = measured.height ?? 320;
+      const widthDelta = Math.abs(curWidth - origin.width);
+      const heightDelta = Math.abs(curHeight - origin.height);
+      if (widthDelta > 5 || heightDelta > 5) return;
+
+      const dx = node.position.x - origin.x;
+      const dy = node.position.y - origin.y;
+
+      // Only move children if total position change exceeds 5px.
+      // During resize from any edge, position changes are minimal (<5px).
+      // During a real drag, position changes significantly (>5px).
+      if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+        const { nodes, expandedFolders } = get();
+        // Only move children if the folder is expanded (children are visible)
+        if (!expandedFolders[node.id]) return;
+
+        const childSet = new Set(childIds);
+        const updatedNodes = nodes.map((n) => {
+          if (childSet.has(n.id)) {
+            return {
+              ...n,
+              position: {
+                x: n.position.x + dx,
+                y: n.position.y + dy,
+              },
+            };
+          }
+          return n;
+        });
+
+        set({ nodes: updatedNodes });
+      }
+    }
+  },
+
+  onNodeDragStop: async (_event: unknown, node: Node) => {
+    const state = get();
+    const driveItem = (node.data as unknown as CanvasNodeData)?.driveItem;
+    if (!driveItem) return;
+
+    // Build a simple nodeSizes map
+    const nodeSizes = new Map<string, { width: number; height: number }>();
+    for (const n of state.nodes) {
+      const size = (n as any).measured ?? { width: 180, height: 170 };
+      nodeSizes.set(n.id, size);
+    }
+
+    // Find containing folder by bounds
+    const containerFolder = findContainingFolder(node as unknown as Node<CanvasNodeData>, state.nodes, nodeSizes);
+
+    const currentParentId = driveItem.parentId;
+    const targetFolderId = containerFolder?.id ?? undefined;
+
+    // ── EARLY RETURN: already in the same folder ───────────────
+    // If targetFolderId is the same as current parent, the item hasn't
+    // actually moved — skip the API call entirely.
+    if (targetFolderId && currentParentId === targetFolderId) {
+      set({ folderHoverTarget: null });
+      return;
+    }
+
+    // ── EARLY RETURN: already at root, dropped outside ──────────
+    // If dropped outside any folder and item's parent is the root folder,
+    // the item is already at root — no move needed. This prevents the
+    // 403 Forbidden from PATCH with addParents=rootId&removeParents=rootId.
+    const rootFolderId = useRootStore.getState().rootFolderId;
+    if (!targetFolderId && currentParentId && currentParentId === rootFolderId) {
+      set({ folderHoverTarget: null });
+      return;
+    }
+
+    // ── EARLY RETURN: item has no parent and dropped outside ────
+    // Root-level items dropped on empty space are already at root.
+    if (!targetFolderId && !currentParentId) {
+      set({ folderHoverTarget: null });
+      return;
+    }
+
+    // Only act if the parent changes
+    if (currentParentId !== targetFolderId) {
+      if (targetFolderId) {
+        // Item was dropped INSIDE a folder
+        await state.moveItemToFolder(node.id, targetFolderId);
+      } else if (currentParentId) {
+        // Item was dropped OUTSIDE its parent folder — move to root.
+        // At this point we know currentParentId !== rootFolderId
+        // (handled by early return above), so this is a real move.
+        const rootId = rootFolderId || '';
+        try {
+          await moveItem(node.id, rootId, currentParentId);
+
+          // Update local state
+          const updatedItems = state.allItems.map((item) =>
+            item.id === node.id
+              ? { ...item, parentId: undefined }
+              : item,
+          );
+
+          set({ allItems: updatedItems });
+          useToastStore.getState().addToast({
+            type: 'success',
+            message: 'Movido a la raíz',
+          });
+        } catch (err) {
+          console.error('[onNodeDragStop] Error moving to root:', err);
+          useToastStore.getState().addToast({
+            type: 'error',
+            message: 'No se pudo mover. Reintentá.',
+          });
+        }
+      }
+    }
+
+    set({ folderHoverTarget: null });
   },
 
   /* ── Drag & drop: move item to folder ───────────────────────── */
@@ -937,7 +877,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       return false;
     }
 
-    // ── Update local state ──────────────────────────────────────
+    // ── Update local state (just allItems — nodes stay root-level) ──
     const updatedItems = state.allItems.map((item) => {
       if (item.id === itemId) {
         return { ...item, parentId: targetFolderId };
@@ -945,53 +885,22 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       return item;
     });
 
-    // 1. Remove the node from root-level view (if it was root-level)
-    const nodeToRemove = state.nodes.find(
-      (n) => n.id === itemId && !n.parentId,
-    );
-    const updatedNodes = nodeToRemove
-      ? state.nodes.filter((n) => n.id !== itemId)
-      : state.nodes;
-
-    // 2. If target folder is open, add the node as a child
-    const isTargetOpen = state.folderOpenState[targetFolderId] ?? false;
-    let nodesAfterMove = updatedNodes;
-
-    if (isTargetOpen) {
-      const childPos = state.folderChildPositions[targetFolderId]?.[itemId] ?? {
-        x: 12,
-        y: 12,
-      };
-
-      const newChildNode: Node<CanvasNodeData> = {
-        id: itemId,
-        type: sourceItem.isFolder ? 'folderNode' : 'fileNode',
-        position: childPos,
-        parentId: targetFolderId,
-        extent: 'parent' as const,
-        data: { driveItem: { ...sourceItem, parentId: targetFolderId } },
-        deletable: false,
-      };
-
-      nodesAfterMove = [...updatedNodes, newChildNode];
-    } else {
-      // Target folder is closed — increment count by adding to folderChildPositions
-      const existingChildren = state.folderChildPositions[targetFolderId] ?? {};
-      const updatedChildPositions = {
-        ...state.folderChildPositions,
-        [targetFolderId]: {
-          ...existingChildren,
-          [itemId]: { x: 12, y: 12 },
-        },
-      };
-      // We need to set it as a side effect — handle in set below
-      set({
-        folderChildPositions: updatedChildPositions,
-      });
-    }
+    // Update the node's data to reflect new parentId
+    const updatedNodes = state.nodes.map((n) => {
+      if (n.id === itemId) {
+        return {
+          ...n,
+          data: {
+            ...n.data,
+            driveItem: { ...n.data.driveItem, parentId: targetFolderId },
+          } as unknown as CanvasNodeData,
+        };
+      }
+      return n;
+    });
 
     set({
-      nodes: nodesAfterMove,
+      nodes: updatedNodes,
       allItems: updatedItems,
     });
 
@@ -1000,10 +909,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     debouncedPersist(
       newState.nodes,
       newState.edges,
-      newState.folderOpenState,
-      newState.folderDimensions,
-      newState.folderChildPositions,
-      newState.folderViewportState,
+      newState.expandedFolders,
       persistenceScope(newState.activeTabId, newState.currentFolderId),
     );
 
@@ -1026,22 +932,19 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         ? MOCK_ITEMS
         : await listChildren(currentFolderId || 'root');
 
-      // Build a set of current item IDs for quick lookup
       const currentIds = new Set(allItems.map((i) => i.id));
       const freshIds = new Set(freshItems.map((i) => i.id));
-
-      // Build a map of fresh items by ID
       const freshMap = new Map(freshItems.map((i) => [i.id, i]));
 
-      // 1. Remove items that no longer exist in Drive
+      // 1. Remove items that no longer exist
       const removedIds = new Set(
         [...currentIds].filter((id) => !freshIds.has(id)),
       );
 
-      // 2. Add items that are new in Drive
+      // 2. Add new items
       const newItems = freshItems.filter((i) => !currentIds.has(i.id));
 
-      // 3. Update items whose name changed
+      // 3. Update names for renamed items
       const updatedItems = allItems.map((item) => {
         const fresh = freshMap.get(item.id);
         if (fresh && fresh.name !== item.name) {
@@ -1050,21 +953,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         return item;
       });
 
-      // Merge: keep existing items + add new ones
       const mergedItems = [
         ...updatedItems.filter((i) => !removedIds.has(i.id)),
         ...newItems,
       ];
 
-      // Update nodes:
-      // - Remove nodes for removed IDs
-      // - Add nodes for new items (at the end)
-      // - Update names for renamed items
-      const existingNodeIds = new Set(nodes.filter((n) => !removedIds.has(n.id)).map((n) => n.id));
-
+      // Update nodes
       const filteredNodes = nodes.filter((n) => !removedIds.has(n.id));
 
-      // Update names on existing nodes
       const updatedNodes = filteredNodes.map((node) => {
         const fresh = freshMap.get(node.id);
         if (fresh && fresh.name !== node.data.driveItem.name) {
@@ -1079,14 +975,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         return node;
       });
 
-      // Add new nodes at the end
       const newNodes = newItems
-        .filter((item) => !existingNodeIds.has(item.id))
+        .filter((item) => !currentIds.has(item.id))
         .map((item) => ({
           id: item.id,
           type: item.isFolder ? 'folderNode' as const : 'fileNode' as const,
           position: { x: 12, y: 12 },
-          data: { driveItem: item },
+          data: { driveItem: item } as CanvasNodeData,
           deletable: false,
         }));
 
@@ -1094,6 +989,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         allItems: mergedItems,
         nodes: [...updatedNodes, ...newNodes],
       });
+
+      const state = get();
+      debouncedPersist(
+        state.nodes,
+        state.edges,
+        state.expandedFolders,
+        persistenceScope(state.activeTabId, state.currentFolderId),
+      );
     } catch (err) {
       console.error('[refreshCurrentFolder] Error:', err);
     }
@@ -1115,7 +1018,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       return false;
     }
 
-    // Update local state (no full refresh needed — just update the one node)
     const updatedItems = allItems.map((item) => {
       if (item.id === fileId) {
         return { ...item, name: newName };
@@ -1136,10 +1038,15 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       return node;
     });
 
-    set({
-      allItems: updatedItems,
-      nodes: updatedNodes,
-    });
+    set({ allItems: updatedItems, nodes: updatedNodes });
+
+    const state = get();
+    debouncedPersist(
+      state.nodes,
+      state.edges,
+      state.expandedFolders,
+      persistenceScope(state.activeTabId, state.currentFolderId),
+    );
 
     return true;
   },
@@ -1152,13 +1059,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     // 1. Add to allItems
     const updatedAllItems = [...allItems, driveItem];
 
-    // 2. Calculate position — use provided position (drop) or grid next slot
+    // 2. Calculate position
     const finalPosition: { x: number; y: number } = position ?? (() => {
       const columns = 6;
       const gapX = 220;
       const gapY = 160;
-      const rootLevelNodes = nodes.filter((n) => !n.parentId);
-      const nextIndex = rootLevelNodes.length;
+      const nextIndex = nodes.length;
       return {
         x: (nextIndex % columns) * gapX,
         y: Math.floor(nextIndex / columns) * gapY,
@@ -1175,7 +1081,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       id: driveItem.id,
       type: driveItem.isFolder ? 'folderNode' : 'fileNode',
       position: finalPosition,
-      data: { driveItem },
+      data: { driveItem } as CanvasNodeData,
       deletable: false,
       selected: true,
     };
@@ -1187,6 +1093,15 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       allItems: updatedAllItems,
       selectedNodeId: driveItem.id,
     });
+
+    // Persist
+    const persistState = get();
+    debouncedPersist(
+      persistState.nodes,
+      persistState.edges,
+      persistState.expandedFolders,
+      persistenceScope(persistState.activeTabId, persistState.currentFolderId),
+    );
   },
 
   /* ── Remove items (trash from canvas) ────────────────────────── */
@@ -1207,17 +1122,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     set({ pendingTrashItemIds: [] });
   },
 
-  /**
-   * Remove items from local state after they've been moved to trash.
-   * Handles fade-out animation via removingNodeIds state:
-   * 1. Sets removingNodeIds for the given IDs (triggers fade-out class in nodes)
-   * 2. After 300ms (match CSS animation duration), removes nodes and items from state
-   * 3. Handles cleanup of folderOpenState, folderChildPositions for removed folders
-   */
   removeItems: (fileIds: string[]) => {
     const { removingNodeIds } = get();
 
-    // If any are already being removed, skip
     const alreadyRemoving = new Set(removingNodeIds);
     const toRemove = fileIds.filter((id) => !alreadyRemoving.has(id));
     if (toRemove.length === 0) return;
@@ -1230,24 +1137,15 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const currentState = get();
       const removeSet = new Set(toRemove);
 
-      // Remove nodes
       const updatedNodes = currentState.nodes.filter((n) => !removeSet.has(n.id));
-
-      // Remove from allItems
       const updatedItems = currentState.allItems.filter((i) => !removeSet.has(i.id));
 
-      // Clean up folder state for removed folders
-      const updatedOpenState = { ...currentState.folderOpenState };
-      const updatedChildPositions = { ...currentState.folderChildPositions };
-      const updatedViewportState = { ...currentState.folderViewportState };
-
+      // Clean up expanded state for removed folders
+      const updatedExpanded = { ...currentState.expandedFolders };
       for (const id of toRemove) {
-        delete updatedOpenState[id];
-        delete updatedChildPositions[id];
-        delete updatedViewportState[id];
+        delete updatedExpanded[id];
       }
 
-      // Clean up removingNodeIds
       const remainingRemoving = currentState.removingNodeIds.filter(
         (id) => !removeSet.has(id),
       );
@@ -1255,11 +1153,55 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       set({
         nodes: updatedNodes,
         allItems: updatedItems,
-        folderOpenState: updatedOpenState,
-        folderChildPositions: updatedChildPositions,
-        folderViewportState: updatedViewportState,
+        expandedFolders: updatedExpanded,
         removingNodeIds: remainingRemoving,
       });
+
+      const stateAfterRemove = get();
+      debouncedPersist(
+        stateAfterRemove.nodes,
+        stateAfterRemove.edges,
+        stateAfterRemove.expandedFolders,
+        persistenceScope(stateAfterRemove.activeTabId, stateAfterRemove.currentFolderId),
+      );
     }, 300);
+  },
+
+  /* ── Z-index (traer al frente / enviar atrás) ─────────────────── */
+
+  bringToFront: (nodeId: string) => {
+    const { nodes } = get();
+    const idx = nodes.findIndex((n) => n.id === nodeId);
+    if (idx === -1 || idx === nodes.length - 1) return;
+    const updated = [...nodes];
+    const [node] = updated.splice(idx, 1);
+    updated.push(node); // Al final = al frente
+
+    set({ nodes: updated });
+
+    debouncedPersist(
+      updated,
+      get().edges,
+      get().expandedFolders,
+      persistenceScope(get().activeTabId, get().currentFolderId),
+    );
+  },
+
+  sendToBack: (nodeId: string) => {
+    const { nodes } = get();
+    const idx = nodes.findIndex((n) => n.id === nodeId);
+    if (idx === -1 || idx === 0) return;
+    const updated = [...nodes];
+    const [node] = updated.splice(idx, 1);
+    updated.unshift(node); // Al inicio = atrás
+
+    set({ nodes: updated });
+
+    debouncedPersist(
+      updated,
+      get().edges,
+      get().expandedFolders,
+      persistenceScope(get().activeTabId, get().currentFolderId),
+    );
   },
 }));

@@ -128,6 +128,11 @@ async function withRetry<T>(
     } catch (err: unknown) {
       lastError = err;
 
+      // Permission errors (403) — no retry, throw immediately
+      if (isGapiError(err) && err.status === 403) {
+        throw new Error('No tenés permisos para esta operación.');
+      }
+
       // Rate limit (429) — retry con backoff
       if (isGapiError(err) && err.status === 429) {
         if (attempt < maxRetries) {
@@ -256,6 +261,31 @@ async function ensureApiReady(): Promise<void> {
  * - Cachea cada item individualmente
  * - Orden: carpetas primero, luego alfabético
  */
+/**
+ * Recursively lists ALL items in a folder tree (all descendants).
+ * Used when loading the root canvas so all items become root-level nodes
+ * and their saved positions can be restored.
+ */
+export async function listAllChildren(folderId: string): Promise<DriveItem[]> {
+  const visited = new Set<string>();
+  const allItems: DriveItem[] = [];
+
+  async function walk(currentId: string): Promise<void> {
+    if (visited.has(currentId)) return;
+    visited.add(currentId);
+    const items = await listChildren(currentId);
+    for (const item of items) {
+      allItems.push(item);
+      if (item.isFolder) {
+        await walk(item.id);
+      }
+    }
+  }
+
+  await walk(folderId);
+  return allItems;
+}
+
 export async function listChildren(folderId: string): Promise<DriveItem[]> {
   await ensureApiReady();
 

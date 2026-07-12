@@ -490,6 +490,31 @@ function FileNode({ id, data, selected }: NodeProps) {
             </svg>
             Conectar con...
           </button>
+          <div className="border-t border-gray-100 my-1" />
+          <button
+            onClick={() => {
+              useCanvasStore.getState().bringToFront(id);
+              closeCtx();
+            }}
+            className="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 active:scale-[0.97]"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="16" height="16" className="shrink-0 text-gray-400">
+              <path fillRule="evenodd" d="M5.23 2a4.23 4.23 0 00-4.23 4.23V13.5A2.5 2.5 0 003.5 16H5v1.25a.75.75 0 001.28.53l3.33-3.33a.75.75 0 000-1.06L6.28 10.1a.75.75 0 00-1.28.53v1.12H3.5a1 1 0 01-1-1V6.23A2.73 2.73 0 015.23 3.5H16.5a1 1 0 011 1v4.27a2.73 2.73 0 01-2.73 2.73H13a.75.75 0 000 1.5h1.77a4.23 4.23 0 004.23-4.23V4.5A2.5 2.5 0 0016.5 2H5.23z" clipRule="evenodd" />
+            </svg>
+            Traer al frente
+          </button>
+          <button
+            onClick={() => {
+              useCanvasStore.getState().sendToBack(id);
+              closeCtx();
+            }}
+            className="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 active:scale-[0.97]"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="16" height="16" className="shrink-0 text-gray-400">
+              <path fillRule="evenodd" d="M14.77 18a4.23 4.23 0 004.23-4.23V6.5A2.5 2.5 0 0016.5 4H15V2.75a.75.75 0 00-1.28-.53l-3.33 3.33a.75.75 0 000 1.06l3.33 3.33a.75.75 0 001.28-.53V7.5h1.5a1 1 0 011 1v6.27a2.73 2.73 0 01-2.73 2.73H3.5a1 1 0 01-1-1V10.23A2.73 2.73 0 015.23 7.5H7a.75.75 0 000-1.5H5.23A4.23 4.23 0 001 10.23v5.27A2.5 2.5 0 003.5 18h11.27z" clipRule="evenodd" />
+            </svg>
+            Enviar atrás
+          </button>
         </div>
       )}
 

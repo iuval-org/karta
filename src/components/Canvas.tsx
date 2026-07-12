@@ -25,6 +25,7 @@ import CreateModal from './CreateModal';
 import { useAuthStore } from '../stores/authStore';
 import { useToastStore } from '../stores/toastStore';
 import { useNavigationStore } from '../stores/navigationStore';
+import { useRootStore } from '../stores/rootStore';
 import { createItem, CREATE_MIME_TYPES, trashItems } from '../services/drive';
 import ConfirmModal from './ConfirmModal';
 
@@ -52,33 +53,79 @@ function Flow() {
   const onConnect = useCanvasStore((s) => s.onConnect);
   const removeEdges = useCanvasStore((s) => s.removeEdges);
   const allItems = useCanvasStore((s) => s.allItems);
-  const rootFolderId = useCanvasStore((s) => s.nodes[0]?.id ?? 'root');
+  const expandedFolders = useCanvasStore((s) => s.expandedFolders);
+  const storeOnNodeDragStart = useCanvasStore((s) => s.onNodeDragStart);
+  const storeOnNodeDrag = useCanvasStore((s) => s.onNodeDrag);
+  const storeOnNodeDragStop = useCanvasStore((s) => s.onNodeDragStop);
   const { fitView } = useReactFlow();
   const { getIntersectingNodes } = useReactFlow();
   const logout = useAuthStore((s) => s.logout);
 
   const prefs = usePreferencesStore();
 
+  /* ── Filter visible nodes ────────────────────────────────────── */
+  // All nodes are root-level. Nodes inside a collapsed folder are hidden.
+  const visibleNodes = nodes.filter((node) => {
+    if (node.type === 'folderNode') return true;
+
+    // Check if this node is inside any collapsed folder
+    for (const [folderId, isExpanded] of Object.entries(expandedFolders)) {
+      if (!isExpanded) {
+        // Build a quick bounds check: find the folder node
+        const folderNode = nodes.find((n) => n.id === folderId);
+        if (!folderNode) continue;
+
+        // Rough bounds check using node sizes
+        const folderPos = folderNode.position;
+        const folderW = (folderNode as any).measured?.width ?? 640;
+        const folderH = (folderNode as any).measured?.height ?? 320;
+        const itemW = (node as any).measured?.width ?? 180;
+        const itemH = (node as any).measured?.height ?? 170;
+
+        const itemCenterX = node.position.x + itemW / 2;
+        const itemCenterY = node.position.y + itemH / 2;
+
+        if (
+          itemCenterX >= folderPos.x &&
+          itemCenterX <= folderPos.x + folderW &&
+          itemCenterY >= folderPos.y &&
+          itemCenterY <= folderPos.y + folderH
+        ) {
+          return false; // Hide — inside collapsed folder
+        }
+      }
+    }
+
+    return true;
+  });
+
   const initialized = nodes.length > 0;
 
   /* ── drag & drop handlers ───────────────────────────────────── */
-  const moveItemToFolder = useCanvasStore((s) => s.moveItemToFolder);
   const setFolderHoverTarget = useCanvasStore((s) => s.setFolderHoverTarget);
 
+  // Drag delta tracking is handled in the store via folderDragOrigins.
+  // The store's onNodeDragStart records the origin position, and onNodeDrag
+  // compares current vs origin to distinguish real drags from resizes.
+
   const onNodeDragStart = useCallback(
-    () => {
+    (_event: unknown, node: Node) => {
       setFolderHoverTarget(null);
+      storeOnNodeDragStart(_event, node);
     },
-    [setFolderHoverTarget],
+    [setFolderHoverTarget, storeOnNodeDragStart],
   );
 
   const onNodeDrag = useCallback(
-    (_: unknown, node: Node) => {
-      // Detect if the dragged node is over a folder node (visual feedback)
+    (_event: unknown, node: Node) => {
+      // Call store handler to track folder position and move children if needed
+      storeOnNodeDrag(_event, node);
+
+      // Detect hover over folder nodes (visual feedback for drop targets)
       const intersecting = getIntersectingNodes(node)
         .filter(
           (n: Node) =>
-            n.type === 'folderNode' && n.id !== node.id && !n.parentId,
+            n.type === 'folderNode' && n.id !== node.id,
         );
 
       if (intersecting.length > 0) {
@@ -87,21 +134,16 @@ function Flow() {
         setFolderHoverTarget(null);
       }
     },
-    [getIntersectingNodes, setFolderHoverTarget],
+    [getIntersectingNodes, setFolderHoverTarget, storeOnNodeDrag],
   );
 
   const onNodeDragStop = useCallback(
-    (_: unknown, node: Node) => {
-      // Get the currently hovered folder (set by onNodeDrag)
-      const currentHoverTarget =
-        useCanvasStore.getState().folderHoverTarget;
+    (_event: unknown, node: Node) => {
+      // Call store's onNodeDragStop for Drive sync
+      storeOnNodeDragStop(_event, node);
       setFolderHoverTarget(null);
-
-      if (currentHoverTarget) {
-        moveItemToFolder(node.id, currentHoverTarget);
-      }
     },
-    [moveItemToFolder, setFolderHoverTarget],
+    [storeOnNodeDragStop, setFolderHoverTarget],
   );
 
   /* ── edge context menu ──────────────────────────────────────── */
@@ -165,10 +207,10 @@ function Flow() {
 
   /** Determine the parent folder for new items. */
   const getParentFolderId = useCallback(() => {
-    // If navigating inside a subfolder, use that folder's ID
-    // Otherwise, use the root folder ID (or 'root' as fallback)
-    return currentFolderId || rootFolderId || 'root';
-  }, [currentFolderId, rootFolderId]);
+    if (currentFolderId) return currentFolderId;
+    const realRootId = useRootStore.getState().rootFolderId;
+    return realRootId || 'root';
+  }, [currentFolderId]);
 
   /* ── drag & drop from sidebar onto canvas ────────────────────── */
   const reactFlowInstance = useReactFlow();
@@ -195,7 +237,6 @@ function Flow() {
         y: event.clientY,
       });
 
-      // Determine label
       let label = 'Elemento';
       if (mimeType === CREATE_MIME_TYPES.folder) label = 'Carpeta';
       else if (mimeType === CREATE_MIME_TYPES.document) label = 'Documento';
@@ -212,21 +253,96 @@ function Flow() {
     [reactFlowInstance, getParentFolderId],
   );
 
+  /* ── pane context menu (right-click on empty canvas / node) ──── */
+  const [paneCtxMenu, setPaneCtxMenu] = useState<{
+    x: number;
+    y: number;
+    flowX: number;
+    flowY: number;
+  } | null>(null);
+  const paneCtxRef = useRef<HTMLDivElement>(null);
+
+  const onPaneContextMenu = useCallback(
+    (event: React.MouseEvent | MouseEvent) => {
+      event.preventDefault();
+      const flowPos = reactFlowInstance.screenToFlowPosition({
+        x: (event as React.MouseEvent).clientX,
+        y: (event as React.MouseEvent).clientY,
+      });
+      setPaneCtxMenu({
+        x: (event as React.MouseEvent).clientX,
+        y: (event as React.MouseEvent).clientY,
+        flowX: flowPos.x,
+        flowY: flowPos.y,
+      });
+    },
+    [reactFlowInstance],
+  );
+
+  const handlePaneCtxCreateDocument = useCallback(() => {
+    if (!paneCtxMenu) return;
+    const parentId = getParentFolderId();
+    setCreateModal({
+      title: 'Nuevo Documento',
+      mimeType: CREATE_MIME_TYPES.document,
+      parentFolderId: parentId,
+      position: { x: paneCtxMenu.flowX, y: paneCtxMenu.flowY },
+    });
+    setPaneCtxMenu(null);
+  }, [paneCtxMenu, getParentFolderId]);
+
+  const handlePaneCtxCreateFolder = useCallback(() => {
+    if (!paneCtxMenu) return;
+    const parentId = getParentFolderId();
+    setCreateModal({
+      title: 'Nueva Carpeta',
+      mimeType: CREATE_MIME_TYPES.folder,
+      parentFolderId: parentId,
+      position: { x: paneCtxMenu.flowX, y: paneCtxMenu.flowY },
+    });
+    setPaneCtxMenu(null);
+  }, [paneCtxMenu, getParentFolderId]);
+
+  const handlePaneCtxClose = useCallback(() => setPaneCtxMenu(null), []);
+
+  /* close pane context menu on outside click / Escape */
+  useEffect(() => {
+    if (!paneCtxMenu) return;
+    const onDown = (e: globalThis.MouseEvent) => {
+      if (
+        paneCtxRef.current &&
+        e.target instanceof Element &&
+        !paneCtxRef.current.contains(e.target)
+      ) {
+        handlePaneCtxClose();
+      }
+    };
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === 'Escape') handlePaneCtxClose();
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [paneCtxMenu, handlePaneCtxClose]);
+
   /** Handle CreateModal submission → call Drive API, add to canvas. */
   const [isCreating, setIsCreating] = useState(false);
 
   const handleCreateSubmit = useCallback(
     async (name: string, mimeType: string, parentFolderId: string, dropPosition?: { x: number; y: number }) => {
-      console.log('[CREATE] handleCreateSubmit called:', { name, mimeType, parentFolderId, dropPosition });
       setIsCreating(true);
       try {
-        console.log('[CREATE] calling createItem…');
         const newItem = await createItem(name, mimeType, parentFolderId);
-        console.log('[CREATE] createItem succeeded, result:', newItem);
         addNewItem(newItem, dropPosition);
         setCreateModal(null);
 
-        // Determine label for toast
+        requestAnimationFrame(() => {
+          fitView({ nodes: [{ id: newItem.id }], duration: 200, padding: 0.3 });
+        });
+
         let label = 'Elemento';
         if (mimeType === CREATE_MIME_TYPES.folder) label = 'Carpeta';
         else if (mimeType === CREATE_MIME_TYPES.document) label = 'Documento';
@@ -247,7 +363,7 @@ function Flow() {
         setIsCreating(false);
       }
     },
-    [addNewItem],
+    [addNewItem, fitView],
   );
 
   const handleCreateCancel = useCallback(() => {
@@ -285,8 +401,6 @@ function Flow() {
   useEffect(() => {
     if (!pendingRenameNodeId) return;
     clearRenameNode();
-    // Inline rename UI will be implemented in ticket #22.
-    // For now, show an info toast.
     const item = allItems.find((i) => i.id === pendingRenameNodeId);
     const name = item?.name ?? pendingRenameNodeId;
     useToastStore.getState().addToast({
@@ -310,18 +424,15 @@ function Flow() {
     try {
       const { success, failed } = await trashItems(ids);
 
-      // Remove successful items from canvas with fade-out
       if (success.length > 0) {
         removeItems(success);
 
-        // Silently refresh the current folder to sync with Drive
         const refresh = useCanvasStore.getState().refreshCurrentFolder;
         if (refresh) {
           refresh().catch(() => {});
         }
       }
 
-      // Show toasts
       if (success.length === 1) {
         const item = useCanvasStore.getState().allItems.find((i) => i.id === success[0]);
         useToastStore.getState().addToast({
@@ -395,12 +506,11 @@ function Flow() {
     }
   }, [initialized, isLoading, fitView]);
 
-  /* ── edge tooltip on hover ──────────────────────────────────── */
   const handleRetry = useCallback(() => {
-    loadItems(rootFolderId);
-  }, [loadItems, rootFolderId]);
+    const folderId = useNavigationStore.getState().currentFolderId || useRootStore.getState().rootFolderId || 'root';
+    loadItems(folderId);
+  }, [loadItems]);
 
-  /* ── determine empty state ──────────────────────────────────── */
   const isEmpty = initialized && nodes.length === 0;
 
   /* ── render proper state ────────────────────────────────────── */
@@ -470,7 +580,7 @@ function Flow() {
       onDrop={onDrop}
     >
       <ReactFlow
-        nodes={nodes}
+        nodes={visibleNodes}
         edges={edges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
@@ -499,6 +609,8 @@ function Flow() {
         onEdgeMouseEnter={onEdgeMouseEnter}
         onEdgeMouseMove={onEdgeMouseMove}
         onEdgeMouseLeave={onEdgeMouseLeave}
+        onNodeContextMenu={onPaneContextMenu}
+        onPaneContextMenu={onPaneContextMenu}
         connectionLineStyle={{ stroke: '#6366F1', strokeWidth: 2 }}
         connectionLineType={ConnectionLineType.SmoothStep}
         onNodeDragStart={onNodeDragStart}
@@ -559,6 +671,44 @@ function Flow() {
               />
             </svg>
             Eliminar conexión
+          </button>
+        </div>
+      )}
+
+      {/* ── pane context menu (right-click on canvas) ── */}
+      {paneCtxMenu && (
+        <div
+          ref={paneCtxRef}
+          className="fixed z-50 min-w-[190px] bg-white border border-gray-200 rounded-lg shadow-lg py-1 motion-safe:animate-fade-in-up"
+          style={{ left: paneCtxMenu.x, top: paneCtxMenu.y }}
+        >
+          <div className="px-3 py-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider">
+            Nuevo
+          </div>
+          <button
+            onClick={handlePaneCtxCreateDocument}
+            className="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 active:scale-[0.97] cursor-pointer"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="16" height="16" className="shrink-0 text-gray-400">
+              <path d="M3 3.5A1.5 1.5 0 014.5 2h6.879a1.5 1.5 0 011.06.44l4.122 4.12A1.5 1.5 0 0117 7.622V16.5a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 013 16.5v-13z" />
+            </svg>
+            Documento
+          </button>
+          <button
+            onClick={handlePaneCtxCreateFolder}
+            className="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 active:scale-[0.97] cursor-pointer"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="16" height="16" className="shrink-0 text-gray-400">
+              <path d="M3.75 3A1.75 1.75 0 002 4.75v10.5c0 .966.784 1.75 1.75 1.75h12.5A1.75 1.75 0 0018 15.25v-8.5A1.75 1.75 0 0016.25 5h-4.836a.25.25 0 01-.177-.073L9.823 3.513A1.75 1.75 0 008.586 3H3.75z" />
+            </svg>
+            Carpeta
+          </button>
+          <div className="border-t border-gray-100 my-1" />
+          <button
+            onClick={handlePaneCtxClose}
+            className="w-full px-3 py-1.5 text-left text-sm text-gray-500 hover:bg-gray-50 active:scale-[0.97] cursor-pointer"
+          >
+            Cancelar
           </button>
         </div>
       )}
