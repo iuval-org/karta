@@ -662,7 +662,28 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     // resize from left/top edges to correctly shift position.x/position.y.
     // Child movement is handled in onNodeDrag, not here.
     if (changes.length > 0) {
-      set({ nodes: applyNodeChanges(changes, get().nodes) as Node<CanvasNodeData>[] });
+      let updated = applyNodeChanges(changes, get().nodes) as Node<CanvasNodeData>[];
+
+      // Guard: ReactFlow's ResizeObserver dimension changes carry
+      // `setAttributes: true` which overwrites user-set width/height.
+      // Stale callbacks (from during a drag) can fire after our
+      // setExpandedFolderDims, snapping the folder back to an intermediate
+      // or old size. Restore expanded-folder dimensions from our store.
+      const hasDimChanges = changes.some((c) => c.type === 'dimensions');
+      if (hasDimChanges) {
+        const dims = get().expandedFolderDims;
+        if (Object.keys(dims).length > 0) {
+          updated = updated.map((n) => {
+            const saved = dims[n.id];
+            if (saved) {
+              return { ...n, width: saved.width, height: saved.height, measured: { width: saved.width, height: saved.height } };
+            }
+            return n;
+          });
+        }
+      }
+
+      set({ nodes: updated });
     }
 
     // If a real position change happened, persist (debounced)
@@ -777,6 +798,15 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   setExpandedFolderDims: (folderId: string, width: number, height: number) => {
     set((state) => ({
       expandedFolderDims: { ...state.expandedFolderDims, [folderId]: { width, height } },
+      // Also update ReactFlow's internal node dimensions so the
+      // wrapper div matches the inner content size. Without this,
+      // ReactFlow keeps a stale collapsed-dimension wrapper that
+      // clips the expanded folder content.
+      nodes: state.nodes.map((n) =>
+        n.id === folderId
+          ? { ...n, width, height, measured: { width, height } }
+          : n,
+      ),
     }));
   },
 

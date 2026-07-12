@@ -54,16 +54,18 @@ function FolderNode({ id, data, selected }: NodeProps) {
   const rfHeight = storedDims?.height ?? rfNode?.height ?? rfNode?.measured?.height ?? 320;
 
   /* ── Custom resize (replaces buggy NodeResizer) ── */
-  // ReactFlow has a CSS transform rendering bug: when one node's DOM
-  // size changes, browser layout recalc shifts all sibling nodes'
-  // transform origins. Mini-map is immune (uses absolute coords, not
-  // transforms). Fix: CSS-isolate the folder with `contain: layout`
-  // so size changes don't leak to siblings. Direct DOM updates during
-  // drag for real-time feedback.
+  // We avoid direct DOM style manipulation because React re-renders
+  // (triggered by ReactFlow's ResizeObserver → onNodesChange) will
+  // overwrite it with the stale containerStyle in between pointer
+  // frames. Instead we keep the current drag dims in a ref and use
+  // them in pointer-up. To keep the visual smooth during drag we
+  // also update a lightweight state so React's style prop adopts
+  // the drag dims (preventing the overwrite fight).
   const isResizing = useRef(false);
   const resizeStart = useRef({ x: 0, y: 0, w: 0, h: 0 });
   const resizeNodeId = useRef(id);
   resizeNodeId.current = id;
+  const [resizeLive, setResizeLive] = useState<{ w: number; h: number } | null>(null);
 
   const handleResizePointerDown = useCallback((e: React.PointerEvent) => {
     e.stopPropagation();
@@ -83,6 +85,10 @@ function FolderNode({ id, data, selected }: NodeProps) {
     const dy = e.clientY - resizeStart.current.y;
     const newW = Math.max(300, resizeStart.current.w + dx);
     const newH = Math.max(100, resizeStart.current.h + dy);
+    // Both set live state (so React's style prop adopts the drag
+    // dims and doesn't fight us) and keep direct DOM update for
+    // instant visual feedback.
+    setResizeLive({ w: newW, h: newH });
     if (rootElRef.current) {
       rootElRef.current.style.width = `${newW}px`;
       rootElRef.current.style.height = `${newH}px`;
@@ -93,13 +99,13 @@ function FolderNode({ id, data, selected }: NodeProps) {
     if (!isResizing.current) return;
     isResizing.current = false;
     (e.target as HTMLElement).releasePointerCapture(e.pointerId);
-    // Save final dimensions to store for persistence
-    const nodeEl = rootElRef.current;
-    if (nodeEl) {
-      const rect = nodeEl.getBoundingClientRect();
-      setExpandedFolderDims(resizeNodeId.current, rect.width, rect.height);
-    }
-  }, [setExpandedFolderDims]);
+    const finalDims = resizeLive ?? (rootElRef.current ? {
+      w: rootElRef.current.getBoundingClientRect().width,
+      h: rootElRef.current.getBoundingClientRect().height,
+    } : { w: rfWidth, h: rfHeight });
+    setResizeLive(null);
+    setExpandedFolderDims(resizeNodeId.current, finalDims.w, finalDims.h);
+  }, [setExpandedFolderDims, resizeLive, rfWidth, rfHeight]);
 
   /* ── Store selectors (simplified — no viewport/child positions) ── */
   const isExpanded = useCanvasStore((s) => s.expandedFolders[id] ?? false);
@@ -128,21 +134,11 @@ function FolderNode({ id, data, selected }: NodeProps) {
     [allItems, item.id],
   );
 
-  /* ── Apply overflow:hidden to ReactFlow wrapper when open ── */
-  useEffect(() => {
-    if (!isExpanded || !rootElRef.current) return;
-
-    const wrapper = rootElRef.current.parentElement;
-    if (!wrapper) return;
-
-    wrapper.style.overflow = 'hidden';
-    wrapper.style.position = 'relative';
-
-    return () => {
-      wrapper.style.overflow = '';
-      wrapper.style.position = '';
-    };
-  }, [isExpanded]);
+  /* ── No longer needed: wrapper overflow:hidden was clipping the
+     expanded folder because ReactFlow's wrapper retained collapsed
+     dimensions (220x60) while the inner div expanded to saved dims.
+     The content area div below already has overflow:hidden to
+     clip children inside the folder. ── */
 
   /* ── handlers ── */
 
@@ -369,9 +365,13 @@ function FolderNode({ id, data, selected }: NodeProps) {
   );
 
   /* ── styles ── */
-  const containerStyle: React.CSSProperties | undefined = isExpanded
-    ? { width: rfWidth, height: rfHeight, contain: 'layout' as any }
-    : { width: 220, height: 60 };
+  const containerStyle: React.CSSProperties | undefined = (() => {
+    if (isExpanded) {
+      if (resizeLive) return { width: resizeLive.w, height: resizeLive.h };
+      return { width: rfWidth, height: rfHeight };
+    }
+    return { width: 220, height: 60 };
+  })();
 
   const borderClass = selected
     ? 'border-indigo-500 ring-2 ring-indigo-500/20'
