@@ -634,15 +634,27 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       // width/height/measured from the node so ReactFlow re-measures
       // the now-collapsed node from the DOM. Keep expandedFolderDims
       // intact so the saved expanded size persists across collapse/re-expand.
+      // Also clear zIndex from children so they don't carry stale
+      // elevated z-index into other contexts.
       const next = { ...expandedFolders };
       delete next[folderId];
 
-      const { nodes } = get();
+      const { nodes, allItems } = get();
+      const childIds = new Set(
+        allItems.filter((item) => item.parentId === folderId).map((item) => item.id),
+      );
       const updatedNodes = nodes.map((n) => {
-        if (n.id !== folderId) return n;
-        // Remove stale width/height/measured so ReactFlow re-measures
-        const { width, height, measured, ...rest } = n as any;
-        return rest;
+        if (n.id === folderId) {
+          // Remove stale width/height/measured so ReactFlow re-measures
+          const { width, height, measured, ...rest } = n as any;
+          return rest;
+        }
+        if (childIds.has(n.id)) {
+          // Clear elevated zIndex set during expand
+          const { zIndex, ...rest } = n as any;
+          return rest;
+        }
+        return n;
       });
 
       set({
@@ -651,9 +663,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       });
     } else {
       // OPEN: mark as expanded (all nodes stay root-level, Canvas
-      // filters visibility). Move children to the end of the nodes
-      // array so they render on top of the folder (ReactFlow z-index
-      // = DOM order when nodes share the same z-index value).
+      // filters visibility). Set explicit zIndex: 2000 on children
+      // so they render on top of the folder regardless of array order
+      // or selection state. Also reorder children to end of array.
       const { nodes, allItems } = get();
       const childIds = allItems
         .filter((item) => item.parentId === folderId)
@@ -662,7 +674,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       if (childIds.length > 0) {
         const childSet = new Set(childIds);
         const otherNodes = nodes.filter((n) => !childSet.has(n.id));
-        const childNodes = nodes.filter((n) => childSet.has(n.id));
+        const childNodes = nodes
+          .filter((n) => childSet.has(n.id))
+          .map((n) => ({ ...n, zIndex: 2000 } as Node<CanvasNodeData>));
         reorderedNodes = [...otherNodes, ...childNodes];
       }
       set({
