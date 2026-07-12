@@ -15,7 +15,8 @@ import {
 } from '@xyflow/react';
 import type { DriveItem } from '../types/drive';
 import { listChildren, listAllChildren, getUseMock } from '../services/drive';
-import { moveItem, renameItem } from '../services/drive';
+import { syncFolder as syncFolderService } from '../services/sync';
+import type { SyncResult } from '../services/sync';
 import { MOCK_ITEMS } from '../data/mockDriveItems';
 import { calcGridLayout } from '../utils/layout';
 import { debounce } from '../utils/debounce';
@@ -39,6 +40,9 @@ interface CanvasState {
   error: string | null;
   errorType: 'connection' | 'auth' | 'rate-limit' | 'unknown' | null;
   layout: 'grid' | 'free';
+
+  /** True mientras se está sincronizando con Google Drive. */
+  isSyncing: boolean;
 
   /** All items (all levels), populated at load time. */
   allItems: DriveItem[];
@@ -138,6 +142,13 @@ interface CanvasState {
    * Hace diff con allItems actual: agrega lo nuevo, actualiza cambios, remueve lo faltante.
    */
   refreshCurrentFolder: () => Promise<void>;
+
+  /**
+   * Sincroniza una carpeta con Google Drive usando Changes API.
+   * Detecta archivos creados, eliminados, renombrados y movidos
+   * desde la última sincronización y aplica cambios quirúrgicos al canvas.
+   */
+  syncFolder: (folderId: string) => Promise<void>;
 
   /**
    * Renombra un nodo localmente (actualiza allItems + nodos) sin llamar a Drive.
@@ -275,6 +286,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   selectedNodeId: null,
   selectedNodeIds: [],
   isLoading: false,
+  isSyncing: false,
   error: null,
   errorType: null,
   layout: 'grid',
@@ -467,7 +479,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   /* ── folder toggle ─────────────────────────────────────────── */
 
-  toggleFolder: (folderId: string) => {
+  toggleFolder: async (folderId: string) => {
     const { expandedFolders } = get();
     const currentlyOpen = expandedFolders[folderId] ?? false;
 
@@ -477,9 +489,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       delete next[folderId];
       set({ expandedFolders: next });
     } else {
-      // OPEN: mark as expanded (all nodes stay root-level, Canvas filters visibility)
+      // OPEN: mark as expanded
       set({
         expandedFolders: { ...expandedFolders, [folderId]: true },
+      });
+
+      // Sync con Google Drive al expandir carpeta
+      get().syncFolder(folderId).catch((err) => {
+        console.error('[toggleFolder] sync error:', err);
       });
     }
 
@@ -799,28 +816,31 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         // At this point we know currentParentId !== rootFolderId
         // (handled by early return above), so this is a real move.
         const rootId = rootFolderId || '';
-        try {
-          await moveItem(node.id, rootId, currentParentId);
-
-          // Update local state
-          const updatedItems = state.allItems.map((item) =>
-            item.id === node.id
-              ? { ...item, parentId: undefined }
-              : item,
-          );
-
-          set({ allItems: updatedItems });
-          useToastStore.getState().addToast({
-            type: 'success',
-            message: 'Movido a la raíz',
-          });
-        } catch (err) {
-          console.error('[onNodeDragStop] Error moving to root:', err);
+        // Queue Drive API call (optimistic local update follows)
+        operationQueue.push({
+          type: 'move',
+          fileId: node.id,
+          payload: { newParentId: rootId, oldParentId: currentParentId },
+        }).catch((err) => {
+          console.error('[onNodeDragStop] Queue error moving to root:', err);
           useToastStore.getState().addToast({
             type: 'error',
             message: 'No se pudo mover. Reintentá.',
           });
-        }
+        });
+
+        // Update local state immediately (optimistic)
+        const updatedItems = state.allItems.map((item) =>
+          item.id === node.id
+            ? { ...item, parentId: undefined }
+            : item,
+        );
+
+        set({ allItems: updatedItems });
+        useToastStore.getState().addToast({
+          type: 'success',
+          message: 'Movido a la raíz',
+        });
       }
     }
 
@@ -885,18 +905,19 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       }
     }
 
-    // ── Drive API call ──────────────────────────────────────────
-    try {
-      await moveItem(itemId, targetFolderId, oldParentId);
-    } catch (err) {
+    // ── Queue Drive API call (optimistic local update follows) ──
+    operationQueue.push({
+      type: 'move',
+      fileId: itemId,
+      payload: { newParentId: targetFolderId, oldParentId },
+    }).catch((err) => {
       const message = err instanceof Error ? err.message : 'Error al mover archivo';
       useToastStore.getState().addToast({
         type: 'error',
         message: 'No se pudo mover. Reintentá.',
       });
-      console.error('[moveItemToFolder] API error:', message);
-      return false;
-    }
+      console.error('[moveItemToFolder] queue error:', message);
+    });
 
     // ── Update local state (just allItems — nodes stay root-level) ──
     const updatedItems = state.allItems.map((item) => {
@@ -1023,22 +1044,89 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }
   },
 
+  /* ── Sync folder (Drive Changes API) ───────────────────────────── */
+
+  syncFolder: async (folderId: string) => {
+    const state = get();
+    if (state.isSyncing) return;
+
+    // Only sync for real Drive (not mock)
+    if (getUseMock()) return;
+
+    set({ isSyncing: true });
+
+    try {
+      const result: SyncResult = await syncFolderService(folderId);
+
+      if (result.changeCount === 0) {
+        return;
+      }
+
+      const { allItems, nodes } = get();
+
+      // 1. Remove items deleted in Drive
+      const removeSet = new Set(result.removed);
+      const filteredItems = allItems.filter((i) => !removeSet.has(i.id));
+      const filteredNodes = nodes.filter((n) => !removeSet.has(n.id));
+
+      // 2. Add new items
+      const newNodes = result.added
+        .filter((item) => !filteredItems.find((i) => i.id === item.id))
+        .map((item) => ({
+          id: item.id,
+          type: item.isFolder ? 'folderNode' as const : 'fileNode' as const,
+          position: { x: 12, y: 12 },
+          data: { driveItem: item } as CanvasNodeData,
+          deletable: false,
+        }));
+
+      const mergedItems = [
+        ...filteredItems,
+        ...result.added.filter((a) => !filteredItems.find((i) => i.id === a.id)),
+      ];
+
+      // 3. Rename items
+      const renamedMap = new Map(result.renamed.map((r) => [r.fileId, r.newName]));
+      const renamedNodes = filteredNodes.map((node) => {
+        const newName = renamedMap.get(node.id);
+        if (newName && newName !== node.data.driveItem.name) {
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              driveItem: { ...node.data.driveItem, name: newName },
+            },
+          };
+        }
+        return node;
+      });
+
+      set({
+        allItems: mergedItems,
+        nodes: [...renamedNodes, ...newNodes],
+      });
+
+      // Persist changes
+      const persistState = get();
+      debouncedPersist(
+        persistState.nodes,
+        persistState.edges,
+        persistState.expandedFolders,
+        persistenceScope(persistState.activeTabId, persistState.currentFolderId),
+      );
+    } catch (err) {
+      console.error('[syncFolder] Error:', err);
+    } finally {
+      set({ isSyncing: false });
+    }
+  },
+
   /* ── Rename node item ──────────────────────────────────────────── */
 
   renameNodeItem: async (fileId: string, newName: string) => {
     const { allItems, nodes } = get();
 
-    try {
-      await renameItem(fileId, newName);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Error al renombrar';
-      useToastStore.getState().addToast({
-        type: 'error',
-        message,
-      });
-      return false;
-    }
-
+    // Update local state immediately (optimistic)
     const updatedItems = allItems.map((item) => {
       if (item.id === fileId) {
         return { ...item, name: newName };
@@ -1060,6 +1148,19 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     });
 
     set({ allItems: updatedItems, nodes: updatedNodes });
+
+    // Queue Drive API call
+    operationQueue.push({
+      type: 'rename',
+      fileId,
+      payload: { newName },
+    }).catch((err) => {
+      const message = err instanceof Error ? err.message : 'Error al renombrar';
+      useToastStore.getState().addToast({
+        type: 'error',
+        message,
+      });
+    });
 
     const state = get();
     debouncedPersist(
@@ -1153,7 +1254,22 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     // 1. Start fade-out animation
     set({ removingNodeIds: [...removingNodeIds, ...toRemove] });
 
-    // 2. After animation completes, actually remove from state
+    // 2. Queue Drive API calls for each item being removed
+    for (const fileId of toRemove) {
+      operationQueue.push({
+        type: 'delete',
+        fileId,
+        payload: {},
+      }).catch((err) => {
+        console.error(`[removeItems] queue error for ${fileId}:`, err);
+        useToastStore.getState().addToast({
+          type: 'error',
+          message: 'No se pudo eliminar. Reintentá.',
+        });
+      });
+    }
+
+    // 3. After animation completes, actually remove from state
     setTimeout(() => {
       const currentState = get();
       const removeSet = new Set(toRemove);
