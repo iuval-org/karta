@@ -86,15 +86,18 @@ function FolderNode({ id, data, selected }: NodeProps) {
     const dy = e.clientY - resizeStart.current.y;
     const newW = Math.max(300, resizeStart.current.w + dx);
     const newH = Math.max(100, resizeStart.current.h + dy);
-    // Both set live state (so React's style prop adopts the drag
-    // dims and doesn't fight us) and keep direct DOM update for
-    // instant visual feedback.
+    // Update local state (so React's style prop adopts the drag dims)
+    // and keep direct DOM update for instant visual feedback.
     setResizeLive({ w: newW, h: newH });
     if (rootElRef.current) {
       rootElRef.current.style.width = `${newW}px`;
       rootElRef.current.style.height = `${newH}px`;
     }
-  }, []);
+    // Update the store's expandedFolderDims and node dimensions in
+    // real-time so visibleNodes clips children to the live bounds
+    // during resize (rather than using stale pre-resize dimensions).
+    setExpandedFolderDims(id, newW, newH);
+  }, [id, setExpandedFolderDims]);
 
   const handleResizePointerUp = useCallback((e: React.PointerEvent) => {
     if (!isResizing.current) return;
