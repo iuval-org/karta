@@ -9,7 +9,6 @@ import {
 } from 'react';
 import {
   Handle,
-  NodeResizer,
   Position,
   useNodeId,
   useStore,
@@ -47,8 +46,60 @@ function FolderNode({ id, data, selected }: NodeProps) {
   /* ── ReactFlow node dimensions ── */
   const nodeId = useNodeId();
   const rfNode = useStore((s) => s.nodeLookup.get(nodeId ?? id));
-  const rfWidth = rfNode?.measured?.width ?? rfNode?.width ?? 640;
-  const rfHeight = rfNode?.measured?.height ?? rfNode?.height ?? 320;
+  // Read expanded dimensions from our own store (not ReactFlow's) to avoid
+  // triggering ReactFlow's rendering bug when dimensions change.
+  const storedDims = useCanvasStore((s) => s.expandedFolderDims[id]);
+  const setExpandedFolderDims = useCanvasStore((s) => s.setExpandedFolderDims);
+  const rfWidth = storedDims?.width ?? rfNode?.width ?? rfNode?.measured?.width ?? 640;
+  const rfHeight = storedDims?.height ?? rfNode?.height ?? rfNode?.measured?.height ?? 320;
+
+  /* ── Custom resize (replaces buggy NodeResizer) ── */
+  // ReactFlow has a CSS transform rendering bug: when one node's DOM
+  // size changes, browser layout recalc shifts all sibling nodes'
+  // transform origins. Mini-map is immune (uses absolute coords, not
+  // transforms). Fix: CSS-isolate the folder with `contain: layout`
+  // so size changes don't leak to siblings. Direct DOM updates during
+  // drag for real-time feedback.
+  const isResizing = useRef(false);
+  const resizeStart = useRef({ x: 0, y: 0, w: 0, h: 0 });
+  const resizeNodeId = useRef(id);
+  resizeNodeId.current = id;
+
+  const handleResizePointerDown = useCallback((e: React.PointerEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const handle = e.currentTarget as HTMLElement;
+    handle.setPointerCapture(e.pointerId);
+    const nodeEl = rootElRef.current;
+    if (!nodeEl) return;
+    const rect = nodeEl.getBoundingClientRect();
+    isResizing.current = true;
+    resizeStart.current = { x: e.clientX, y: e.clientY, w: rect.width, h: rect.height };
+  }, []);
+
+  const handleResizePointerMove = useCallback((e: React.PointerEvent) => {
+    if (!isResizing.current) return;
+    const dx = e.clientX - resizeStart.current.x;
+    const dy = e.clientY - resizeStart.current.y;
+    const newW = Math.max(300, resizeStart.current.w + dx);
+    const newH = Math.max(100, resizeStart.current.h + dy);
+    if (rootElRef.current) {
+      rootElRef.current.style.width = `${newW}px`;
+      rootElRef.current.style.height = `${newH}px`;
+    }
+  }, []);
+
+  const handleResizePointerUp = useCallback((e: React.PointerEvent) => {
+    if (!isResizing.current) return;
+    isResizing.current = false;
+    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+    // Save final dimensions to store for persistence
+    const nodeEl = rootElRef.current;
+    if (nodeEl) {
+      const rect = nodeEl.getBoundingClientRect();
+      setExpandedFolderDims(resizeNodeId.current, rect.width, rect.height);
+    }
+  }, [setExpandedFolderDims]);
 
   /* ── Store selectors (simplified — no viewport/child positions) ── */
   const isExpanded = useCanvasStore((s) => s.expandedFolders[id] ?? false);
@@ -319,7 +370,7 @@ function FolderNode({ id, data, selected }: NodeProps) {
 
   /* ── styles ── */
   const containerStyle: React.CSSProperties | undefined = isExpanded
-    ? { width: rfWidth, height: rfHeight }
+    ? { width: rfWidth, height: rfHeight, contain: 'layout' as any }
     : { width: 220, height: 60 };
 
   const borderClass = selected
@@ -369,10 +420,10 @@ function FolderNode({ id, data, selected }: NodeProps) {
     <div
       ref={rootElRef}
       className={[
-        'relative motion-safe:transition-all select-none w-full h-full',
+        'relative select-none',
         isExpanded
           ? 'bg-white border rounded-xl shadow-sm'
-          : 'bg-blue-50/60 border rounded-xl p-3 w-[120px] cursor-pointer',
+          : 'bg-blue-50/60 border rounded-xl p-3 cursor-pointer',
         borderClass,
         opacityClass,
         removingClass,
@@ -412,16 +463,6 @@ function FolderNode({ id, data, selected }: NodeProps) {
         /*  EXPANDED STATE — frame-style container                   */
         /* ════════════════════════════════════════════════════════ */
         <>
-          {/* ── NodeResizer: resize desde cualquier borde, sin handles visibles ── */}
-          <NodeResizer
-            minWidth={300}
-            minHeight={100}
-            keepAspectRatio={false}
-            handleClassName="opacity-0"
-            lineClassName="z-50 pointer-events-auto border-[6px] border-transparent hover:border-indigo-300 hover:border-dashed transition-all duration-150 ease-in-out cursor-nw-resize"
-            isVisible={isExpanded && !isRenaming}
-          />
-
           {/* ── header bar ── */}
           <div className="flex items-center justify-between bg-blue-50 border-b border-blue-100 px-2 py-1.5 rounded-t-xl">
             <div className="flex items-center gap-1.5 min-w-0">
@@ -479,8 +520,6 @@ function FolderNode({ id, data, selected }: NodeProps) {
               height: 'calc(100% - 34px)',
             }}
           >
-            {/* Children are rendered directly by ReactFlow on the main canvas.
-                We just show an empty state fallback when there are no children. */}
             {childCount === 0 && (
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                 <EmptyState
@@ -491,13 +530,26 @@ function FolderNode({ id, data, selected }: NodeProps) {
               </div>
             )}
 
-            {/* When expanded, show a visual hint that items can be dropped here */}
             {childCount > 0 && (
               <div className="absolute bottom-2 left-1/2 -translate-x-1/2 text-[10px] text-gray-400 pointer-events-none opacity-0 hover:opacity-100 transition-opacity">
                 Arrastrá archivos dentro de esta carpeta
               </div>
             )}
           </div>
+
+          {/* ── Resize handle (bottom-right corner) ── */}
+          {!isRenaming && (
+            <div
+              onPointerDown={handleResizePointerDown}
+              onPointerMove={handleResizePointerMove}
+              onPointerUp={handleResizePointerUp}
+              className="absolute bottom-0 right-0 w-5 h-5 cursor-nwse-resize z-50"
+              style={{
+                background: 'linear-gradient(135deg, transparent 50%, #9ca3af 50%)',
+              }}
+              title="Redimensionar"
+            />
+          )}
         </>
       ) : (
         /* ════════════════════════════════════════════════════════ */

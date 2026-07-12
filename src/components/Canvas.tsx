@@ -76,6 +76,13 @@ function Flow() {
     const driveItem = allItems.find((i) => i.id === node.id);
     if (!driveItem?.parentId) return true; // root-level items always visible
 
+    // Direct children of the root Drive folder are always visible.
+    // The root folder itself is not a node on the canvas, so its
+    // expandedFolders entry is never set. Without this check, all
+    // top-level files/folders from the real Drive API would be hidden.
+    const rootFolderId = useRootStore.getState().rootFolderId;
+    if (rootFolderId && driveItem.parentId === rootFolderId) return true;
+
     // Only show items whose parent folder is expanded.
     // expandedFolders only contains entries for folders that ARE expanded (value = true).
     return expandedFolders[driveItem.parentId] === true;

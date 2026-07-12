@@ -69,6 +69,8 @@ interface CanvasState {
    * by bounds checking (position inside folder bounding box).
    */
   expandedFolders: Record<string, boolean>;
+  /** Saved expanded folder dimensions (set by custom resize, read by FolderNode). */
+  expandedFolderDims: Record<string, { width: number; height: number }>;
   /** Active tab ID for persistence. */
   activeTabId: string;
 
@@ -138,6 +140,16 @@ interface CanvasState {
 
   /** Set the folder currently being hovered during a drag (or null to clear). */
   setFolderHoverTarget: (folderId: string | null) => void;
+
+  /** Save expanded folder dimensions after custom resize. */
+  setExpandedFolderDims: (folderId: string, width: number, height: number) => void;
+
+  /**
+   * Force ReactFlow to re-apply all node positions. Used after a folder
+   * resize to correct the visual shift caused by ReactFlow's rendering bug
+   * when ResizeObserver fires after a single node's DOM size changes.
+   */
+  forceRecalcPositions: () => void;
 
   /**
    * Add a newly created Drive item to the canvas as a new node.
@@ -336,6 +348,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   allItems: [],
   expandedFolders: {},
+  expandedFolderDims: {},
   activeTabId: 'root',
   searchHighlightedNodeIds: [],
   currentFolderId: '',
@@ -761,6 +774,25 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     set({ folderHoverTarget: folderId });
   },
 
+  setExpandedFolderDims: (folderId: string, width: number, height: number) => {
+    set((state) => ({
+      expandedFolderDims: { ...state.expandedFolderDims, [folderId]: { width, height } },
+    }));
+  },
+
+  forceRecalcPositions: () => {
+    const { nodes } = get();
+    // Force new position object references so ReactFlow re-applies
+    // CSS transforms for every node, correcting visual drift caused
+    // by its ResizeObserver rendering bug.
+    set({
+      nodes: nodes.map((n) => ({
+        ...n,
+        position: { x: n.position.x, y: n.position.y },
+      })),
+    });
+  },
+
   /* ── Drag handlers ──────────────────────────────────────────── */
 
   onNodeDragStart: (_event: unknown, node: Node) => {
@@ -780,8 +812,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       origins[node.id] = {
         x: node.position.x,
         y: node.position.y,
-        width: (storeNode as any)?.width ?? (node as any).width ?? undefined,
-        height: (storeNode as any)?.height ?? (node as any).height ?? undefined,
+        width: (storeNode as any)?.width ?? (storeNode as any)?.measured?.width ?? (node as any).width ?? undefined,
+        height: (storeNode as any)?.height ?? (storeNode as any)?.measured?.height ?? (node as any).height ?? undefined,
       };
       set({
         folderDragOrigins: origins,
@@ -817,8 +849,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         // does NOT reflect those dimension updates. Always read dimensions
         // from the store node, which has the latest values.
         const storeNode = get().nodes.find(n => n.id === node.id);
-        const currentWidth = (storeNode as any)?.width ?? (node as any).width ?? 0;
-        const currentHeight = (storeNode as any)?.height ?? (node as any).height ?? 0;
+        const currentWidth = (storeNode as any)?.width ?? (storeNode as any)?.measured?.width ?? (node as any).width ?? 0;
+        const currentHeight = (storeNode as any)?.height ?? (storeNode as any)?.measured?.height ?? (node as any).height ?? 0;
         const isResize =
           origin.width !== undefined &&
           origin.height !== undefined &&
