@@ -42,6 +42,7 @@ export default function Toolbar({ rootFolderName, onOpenSettings }: ToolbarProps
   const isOnline = useConnectivityStore((s) => s.isOnline);
   const addStickyNote = useCanvasStore((s) => s.addStickyNote);
   const addTextBox = useCanvasStore((s) => s.addTextBox);
+  const addShape = useCanvasStore((s) => s.addShape);
   const { fitView, screenToFlowPosition } = useReactFlow();
   const showBreadcrumb = usePreferencesStore((s) => s.showBreadcrumb);
 
@@ -145,6 +146,92 @@ export default function Toolbar({ rootFolderName, onOpenSettings }: ToolbarProps
         >
           <span className="font-body font-bold text-sm leading-none shrink-0">T</span>
           <span className="font-body">Texto</span>
+        </button>
+
+        {/* Shape buttons */}
+        <button
+          onClick={() => {
+            const el = document.querySelector('.react-flow__viewport');
+            if (el) {
+              const rect = el.getBoundingClientRect();
+              const position = screenToFlowPosition({
+                x: rect.left + rect.width / 2,
+                y: rect.top + rect.height / 2,
+              });
+              addShape(position, 'rectangle');
+            }
+          }}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-md cursor-pointer border border-gray-200 motion-safe:transition-[color,background-color]"
+          title="Agregar rectángulo"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-3.5 h-3.5 shrink-0 text-gray-500">
+            <rect x="2" y="3" width="16" height="14" rx="2" />
+          </svg>
+          <span className="font-body">Rect</span>
+        </button>
+
+        <button
+          onClick={() => {
+            const el = document.querySelector('.react-flow__viewport');
+            if (el) {
+              const rect = el.getBoundingClientRect();
+              const position = screenToFlowPosition({
+                x: rect.left + rect.width / 2,
+                y: rect.top + rect.height / 2,
+              });
+              addShape(position, 'circle');
+            }
+          }}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-md cursor-pointer border border-gray-200 motion-safe:transition-[color,background-color]"
+          title="Agregar círculo"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-3.5 h-3.5 shrink-0 text-gray-500">
+            <circle cx="10" cy="10" r="8" />
+          </svg>
+          <span className="font-body">Círculo</span>
+        </button>
+
+        <button
+          onClick={() => {
+            const el = document.querySelector('.react-flow__viewport');
+            if (el) {
+              const rect = el.getBoundingClientRect();
+              const position = screenToFlowPosition({
+                x: rect.left + rect.width / 2,
+                y: rect.top + rect.height / 2,
+              });
+              addShape(position, 'arrow');
+            }
+          }}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-md cursor-pointer border border-gray-200 motion-safe:transition-[color,background-color]"
+          title="Agregar flecha"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-3.5 h-3.5 shrink-0 text-gray-500">
+            <line x1="1" y1="10" x2="15" y2="10" />
+            <polyline points="11,5 16,10 11,15" fill="none" />
+          </svg>
+          <span className="font-body">Flecha</span>
+        </button>
+
+        <button
+          onClick={() => {
+            const el = document.querySelector('.react-flow__viewport');
+            if (el) {
+              const rect = el.getBoundingClientRect();
+              const position = screenToFlowPosition({
+                x: rect.left + rect.width / 2,
+                y: rect.top + rect.height / 2,
+              });
+              addShape(position, 'line');
+            }
+          }}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-md cursor-pointer border border-gray-200 motion-safe:transition-[color,background-color]"
+          title="Agregar línea"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-3.5 h-3.5 shrink-0 text-gray-500">
+            <line x1="2" y1="10" x2="18" y2="10" />
+          </svg>
+          <span className="font-body">Línea</span>
         </button>
 
         <button

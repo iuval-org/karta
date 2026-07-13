@@ -29,3 +29,12 @@ export interface TextBoxData {
   fontWeight: string;
   textAlign: 'left' | 'center' | 'right';
 }
+
+export type ShapeType = 'rectangle' | 'circle' | 'arrow' | 'line';
+
+export interface ShapeNodeData {
+  shapeType: ShapeType;
+  label: string;
+  fillColor: string;
+  borderColor: string;
+}
