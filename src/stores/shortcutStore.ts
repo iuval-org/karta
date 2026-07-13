@@ -54,6 +54,7 @@ export const useShortcutStore = create<ShortcutState>((set, get) => ({
     { key: 'Ctrl + N', description: 'Nuevo archivo/carpeta', category: 'Archivos' },
     { key: '?', description: 'Mostrar/ocultar ayuda', category: 'General' },
     { key: 'Ctrl + \\', description: 'Toggle sidebar', category: 'General' },
+    { key: 'V', description: 'Alternar vista (Canvas/Lista/Grid)', category: 'General' },
     { key: 'Shift + /', description: 'Comando rápido', category: 'General' },
   ],
 }));

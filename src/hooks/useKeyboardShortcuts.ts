@@ -7,6 +7,7 @@ import { useSidebarStore } from '../stores/sidebarStore';
 import { useShortcutStore } from '../stores/shortcutStore';
 import { usePreviewStore } from '../stores/previewStore';
 import { useToastStore } from '../stores/toastStore';
+import { useViewStore } from '../stores/viewStore';
 
 /**
  * Global keyboard shortcuts hook.
@@ -232,6 +233,12 @@ export function useKeyboardShortcuts() {
         case 'Control+\\': {
           e.preventDefault();
           useSidebarStore.getState().toggle();
+          return;
+        }
+
+        case 'v': {
+          e.preventDefault();
+          useViewStore.getState().toggle();
           return;
         }
       }

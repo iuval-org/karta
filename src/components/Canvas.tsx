@@ -17,6 +17,7 @@ import {
 import { useCanvasStore } from '../stores/canvasStore';
 import { useShortcutStore } from '../stores/shortcutStore';
 import { usePreferencesStore } from '../stores/preferencesStore';
+import { useViewStore } from '../stores/viewStore';
 import FileNode from '../nodes/FileNode';
 import FolderNode from '../nodes/FolderNode';
 import LoadingSkeleton from './LoadingSkeleton';
@@ -28,6 +29,9 @@ import { useToastStore } from '../stores/toastStore';
 import { useNavigationStore } from '../stores/navigationStore';
 import { useRootStore } from '../stores/rootStore';
 import FilePreview from './FilePreview';
+import ViewToggle from './ViewToggle';
+import ListView from './ListView';
+import GridView from './GridView';
 import { createItem, CREATE_MIME_TYPES } from '../services/drive';
 import { uploadFile, isFileTooLarge, MAX_UPLOAD_SIZE } from '../services/upload';
 import ConfirmModal from './ConfirmModal';
@@ -52,6 +56,7 @@ function Flow() {
   const error = useCanvasStore((s) => s.error);
   const errorType = useCanvasStore((s) => s.errorType);
   const loadItems = useCanvasStore((s) => s.loadItems);
+  const mode = useViewStore((s) => s.mode);
   const onNodesChange = useCanvasStore((s) => s.onNodesChange);
   const onEdgesChange = useCanvasStore((s) => s.onEdgesChange);
   const onConnect = useCanvasStore((s) => s.onConnect);
@@ -619,67 +624,77 @@ function Flow() {
   return (
     <div
       className="w-full h-full relative"
-      onDragOver={onDragOver}
-      onDragEnter={onDragEnter}
-      onDragLeave={onDragLeave}
-      onDrop={onDrop}
+      onDragOver={mode === 'canvas' ? onDragOver : undefined}
+      onDragEnter={mode === 'canvas' ? onDragEnter : undefined}
+      onDragLeave={mode === 'canvas' ? onDragLeave : undefined}
+      onDrop={mode === 'canvas' ? onDrop : undefined}
     >
-      <ReactFlow
-        nodes={visibleNodes}
-        edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onConnect={onConnect as OnConnect}
-        nodeTypes={nodeTypes}
-        defaultEdgeOptions={defaultEdgeOptions}
-        proOptions={{ hideAttribution: true }}
-        snapToGrid={prefs.snapToGrid}
-        snapGrid={[20, 20]}
-        minZoom={0.1}
-        maxZoom={2}
-        colorMode="light"
-        zoomOnScroll={true}
-        zoomOnDoubleClick={false}
-        panOnScroll={true}
-        panOnScrollMode={PanOnScrollMode.Free}
-        panActivationKeyCode=""
-        deleteKeyCode="Delete"
-        selectionOnDrag={true}
-        selectNodesOnDrag={false}
-        selectionMode={SelectionMode.Partial}
-        multiSelectionKeyCode="Shift"
-        panOnDrag={[1]}
-        onSelectionChange={(params: { nodes: Node[] }) => {
-          useCanvasStore.getState().setSelectedNodeIds(params.nodes.map((n) => n.id));
-        }}
-        onEdgeContextMenu={onEdgeContextMenu}
-        onEdgeMouseEnter={onEdgeMouseEnter}
-        onEdgeMouseMove={onEdgeMouseMove}
-        onEdgeMouseLeave={onEdgeMouseLeave}
+      {/* ── ViewToggle ── */}
+      <div className="absolute top-3 right-3 z-20">
+        <ViewToggle />
+      </div>
 
-        connectionLineStyle={{ stroke: '#6366F1', strokeWidth: 2 }}
-        connectionLineType={ConnectionLineType.SmoothStep}
-        onNodeDragStart={onNodeDragStart}
-        onNodeDrag={onNodeDrag}
-        onNodeDragStop={onNodeDragStop}
-      >
-        {prefs.showBackground && <Background variant={BackgroundVariant.Dots} gap={20} size={1} />}
-        <Controls position="bottom-left" />
-        {prefs.showMinimap && (
-          <MiniMap
-            position="bottom-right"
-            nodeStrokeColor="#6366f1"
-            nodeColor={(n: Node) => {
-              if (n.type === 'folderNode') return '#dbeafe';
-              return '#ffffff';
-            }}
-            style={{ background: '#f9fafb' }}
-          />
-        )}
-      </ReactFlow>
+      {mode === 'canvas' && (
+        <ReactFlow
+          nodes={visibleNodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onConnect={onConnect as OnConnect}
+          nodeTypes={nodeTypes}
+          defaultEdgeOptions={defaultEdgeOptions}
+          proOptions={{ hideAttribution: true }}
+          snapToGrid={prefs.snapToGrid}
+          snapGrid={[20, 20]}
+          minZoom={0.1}
+          maxZoom={2}
+          colorMode="light"
+          zoomOnScroll={true}
+          zoomOnDoubleClick={false}
+          panOnScroll={true}
+          panOnScrollMode={PanOnScrollMode.Free}
+          panActivationKeyCode=""
+          deleteKeyCode="Delete"
+          selectionOnDrag={true}
+          selectNodesOnDrag={false}
+          selectionMode={SelectionMode.Partial}
+          multiSelectionKeyCode="Shift"
+          panOnDrag={[1]}
+          onSelectionChange={(params: { nodes: Node[] }) => {
+            useCanvasStore.getState().setSelectedNodeIds(params.nodes.map((n) => n.id));
+          }}
+          onEdgeContextMenu={onEdgeContextMenu}
+          onEdgeMouseEnter={onEdgeMouseEnter}
+          onEdgeMouseMove={onEdgeMouseMove}
+          onEdgeMouseLeave={onEdgeMouseLeave}
 
-      {/* ── File drag overlay ── */}
-      {isFileDragOver && (
+          connectionLineStyle={{ stroke: '#6366F1', strokeWidth: 2 }}
+          connectionLineType={ConnectionLineType.SmoothStep}
+          onNodeDragStart={onNodeDragStart}
+          onNodeDrag={onNodeDrag}
+          onNodeDragStop={onNodeDragStop}
+        >
+          {prefs.showBackground && <Background variant={BackgroundVariant.Dots} gap={20} size={1} />}
+          <Controls position="bottom-left" />
+          {prefs.showMinimap && (
+            <MiniMap
+              position="bottom-right"
+              nodeStrokeColor="#6366f1"
+              nodeColor={(n: Node) => {
+                if (n.type === 'folderNode') return '#dbeafe';
+                return '#ffffff';
+              }}
+              style={{ background: '#f9fafb' }}
+            />
+          )}
+        </ReactFlow>
+      )}
+
+      {mode === 'list' && <ListView />}
+      {mode === 'grid' && <GridView />}
+
+      {/* ── File drag overlay (canvas only) ── */}
+      {mode === 'canvas' && isFileDragOver && (
         <div className="absolute inset-0 z-40 pointer-events-none rounded-2xl border-2 border-dashed border-[#2563EB] bg-[#2563EB]/[0.04]" />
       )}
 
@@ -705,8 +720,8 @@ function Flow() {
       {/* ── File Preview ── */}
       <FilePreview />
 
-      {/* ── edge tooltip ── */}
-      {hoveredEdge && hoverPos && (() => {
+      {/* ── edge tooltip (canvas only) ── */}
+      {mode === 'canvas' && hoveredEdge && hoverPos && (() => {
         const target = allItems.find((i) => i.id === hoveredEdge.target);
         return target ? (
           <div
@@ -718,8 +733,8 @@ function Flow() {
         ) : null;
       })()}
 
-      {/* ── edge context menu ── */}
-      {edgeCtxMenu && (
+      {/* ── edge context menu (canvas only) ── */}
+      {mode === 'canvas' && edgeCtxMenu && (
         <div
           ref={edgeCtxRef}
           className="fixed z-50 min-w-[180px] bg-white border border-gray-200 rounded-lg shadow-lg py-1 motion-safe:animate-fade-in-up"
