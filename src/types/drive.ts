@@ -4,6 +4,7 @@ export interface DriveItem {
   mimeType: string;
   thumbnailLink?: string;
   iconLink?: string;
+  webContentLink?: string;
   webViewLink: string;
   modifiedTime: string;
   size?: string;

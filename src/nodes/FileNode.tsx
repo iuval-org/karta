@@ -12,6 +12,7 @@ import type { CanvasNodeData } from '../stores/canvasStore';
 import { useCanvasStore } from '../stores/canvasStore';
 import { getFileTypeIcon } from '../types/mime';
 import { validateFileName } from '../utils/validation';
+import { downloadFile } from '../services/download';
 
 /* ------------------------------------------------------------------ */
 /*  Heroicons v2 solid 20×20 — inline SVGs (no npm dependency)        */
@@ -220,6 +221,11 @@ function FileNode({ id, data, selected }: NodeProps) {
     closeCtx();
   }, [item.name, closeCtx]);
 
+  const handleDownload = useCallback(() => {
+    downloadFile(item);
+    closeCtx();
+  }, [item, closeCtx]);
+
   const handleOpenDriveFromMenu = useCallback(() => {
     openInDrive();
     closeCtx();
@@ -286,6 +292,17 @@ function FileNode({ id, data, selected }: NodeProps) {
     if (!name || !name.trim()) return;
     const state = useCanvasStore.getState();
     state.groupInFolder(state.selectedNodeIds, name.trim());
+    closeCtx();
+  }, [closeCtx]);
+
+  const handleBatchDownload = useCallback(() => {
+    const state = useCanvasStore.getState();
+    const ids = state.selectedNodeIds.filter((sid) => sid !== 'root');
+    const allItems = state.allItems;
+    for (const sid of ids) {
+      const file = allItems.find((i) => i.id === sid);
+      if (file) downloadFile(file);
+    }
     closeCtx();
   }, [closeCtx]);
 
@@ -465,6 +482,16 @@ function FileNode({ id, data, selected }: NodeProps) {
             Abrir en Google Drive
           </button>
           <button
+            onClick={handleDownload}
+            className="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 active:scale-[0.97]"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="16" height="16" className="shrink-0 text-gray-400">
+              <path d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z" />
+              <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z" />
+            </svg>
+            Descargar
+          </button>
+          <button
             onClick={handleCopyName}
             className="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 active:scale-[0.97]"
           >
@@ -630,6 +657,16 @@ function FileNode({ id, data, selected }: NodeProps) {
               <path d="M3.75 3A1.75 1.75 0 002 4.75v10.5c0 .966.784 1.75 1.75 1.75h12.5A1.75 1.75 0 0018 15.25v-8.5A1.75 1.75 0 0016.25 5h-4.836a.25.25 0 01-.177-.073L9.823 3.513A1.75 1.75 0 008.586 3H3.75z" />
             </svg>
             Agrupar en carpeta
+          </button>
+          <button
+            onClick={handleBatchDownload}
+            className="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 active:scale-[0.97]"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="16" height="16" className="shrink-0 text-gray-400">
+              <path d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z" />
+              <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z" />
+            </svg>
+            Descargar {selectedNodeIds.length} archivos
           </button>
           <div className="border-t border-gray-100 my-1" />
           <div className="px-3 py-1 text-xs font-semibold text-gray-400 uppercase tracking-wider">
