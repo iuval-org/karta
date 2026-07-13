@@ -8,6 +8,7 @@ import { useShortcutStore } from '../stores/shortcutStore';
 import { usePreviewStore } from '../stores/previewStore';
 import { useToastStore } from '../stores/toastStore';
 import { useViewStore } from '../stores/viewStore';
+import { useDetailsStore } from '../stores/detailsStore';
 
 /**
  * Global keyboard shortcuts hook.
@@ -239,6 +240,15 @@ export function useKeyboardShortcuts() {
         case 'v': {
           e.preventDefault();
           useViewStore.getState().toggle();
+          return;
+        }
+
+        case 'i': {
+          e.preventDefault();
+          const cs = useCanvasStore.getState();
+          if (cs.selectedNodeIds.length === 1) {
+            useDetailsStore.getState().toggle();
+          }
           return;
         }
       }

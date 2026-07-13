@@ -31,6 +31,8 @@ import { useRootStore } from '../stores/rootStore';
 import FilePreview from './FilePreview';
 import ViewToggle from './ViewToggle';
 import ListView from './ListView';
+import DetailsPanel from './DetailsPanel';
+import { useDetailsStore } from '../stores/detailsStore';
 import GridView from './GridView';
 import { createItem, CREATE_MIME_TYPES } from '../services/drive';
 import { uploadFile, isFileTooLarge, MAX_UPLOAD_SIZE } from '../services/upload';
@@ -661,7 +663,14 @@ function Flow() {
           multiSelectionKeyCode="Shift"
           panOnDrag={[1]}
           onSelectionChange={(params: { nodes: Node[] }) => {
-            useCanvasStore.getState().setSelectedNodeIds(params.nodes.map((n) => n.id));
+            const ids = params.nodes.map((n) => n.id);
+            useCanvasStore.getState().setSelectedNodeIds(ids);
+            const details = useDetailsStore.getState();
+            if (ids.length === 1) {
+              details.open();
+            } else {
+              details.close();
+            }
           }}
           onEdgeContextMenu={onEdgeContextMenu}
           onEdgeMouseEnter={onEdgeMouseEnter}
@@ -719,6 +728,9 @@ function Flow() {
 
       {/* ── File Preview ── */}
       <FilePreview />
+
+      {/* ── Details Panel ── */}
+      <DetailsPanel />
 
       {/* ── edge tooltip (canvas only) ── */}
       {mode === 'canvas' && hoveredEdge && hoverPos && (() => {
