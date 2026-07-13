@@ -17,6 +17,7 @@ import {
 } from '@xyflow/react';
 import type { CanvasNodeData } from '../stores/canvasStore';
 import { useCanvasStore } from '../stores/canvasStore';
+import { getChildrenInFolder } from '../utils/folderBounds';
 import { useTabStore } from '../stores/tabStore';
 import EmptyState from '../components/EmptyState';
 import { validateFileName } from '../utils/validation';
@@ -149,10 +150,18 @@ function FolderNode({ id, data, selected }: NodeProps) {
   const rootElRef = useRef<HTMLDivElement>(null);
 
   /* ── child count ── */
-  const childCount = useMemo(
-    () => allItems.filter((i) => i.parentId === item.id).length,
-    [allItems, item.id],
-  );
+  const childCount = useMemo(() => {
+    if (isExpanded) {
+      const nodeSizes = new Map<string, { width: number; height: number }>();
+      for (const n of nodes) {
+        const w = (n as any).width ?? (n as any).measured?.width ?? 180;
+        const h = (n as any).height ?? (n as any).measured?.height ?? (n.type === 'folderNode' ? 320 : 170);
+        nodeSizes.set(n.id, { width: w, height: h });
+      }
+      return getChildrenInFolder(id, nodes, nodeSizes).length;
+    }
+    return allItems.filter((i) => i.parentId === item.id).length;
+  }, [allItems, item.id, isExpanded, id, nodes]);
 
   /* ── No longer needed: wrapper overflow:hidden was clipping the
      expanded folder because ReactFlow's wrapper retained collapsed

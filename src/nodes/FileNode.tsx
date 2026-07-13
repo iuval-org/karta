@@ -334,7 +334,7 @@ function FileNode({ id, data, selected }: NodeProps) {
 
   /* ── available connection targets ───────────────────────────── */
   const connectTargets = nodes
-    .filter((n) => n.id !== id && !n.parentId)
+    .filter((n) => n.id !== id)
     .map((n) => ({
       id: n.id,
       name: (n.data as unknown as CanvasNodeData).driveItem.name,

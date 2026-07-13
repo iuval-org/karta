@@ -1,4 +1,4 @@
-import { type Node } from '@xyflow/react';
+import { type Node, type XYPosition } from '@xyflow/react';
 import type { CanvasNodeData } from '../stores/canvasStore';
 
 /**
@@ -78,4 +78,30 @@ export function getChildrenInFolder(
     const itemSize = nodeSizes.get(n.id) ?? { width: 180, height: 170 };
     return isInsideFolder(n.position, itemSize, folderPos, folderSize);
   });
+}
+
+/**
+ * Check if a node's area overlaps with a folder's area by more than 50%.
+ * Used for drag-start child detection to avoid picking up items that
+ * only barely touch the folder's edge.
+ */
+export function isOverlappingFolder(
+  nodePosition: XYPosition,
+  nodeSize: { width: number; height: number },
+  folderPosition: XYPosition,
+  folderSize: { width: number; height: number },
+): boolean {
+  const nodeLeft = nodePosition.x;
+  const nodeRight = nodePosition.x + nodeSize.width;
+  const nodeTop = nodePosition.y;
+  const nodeBottom = nodePosition.y + nodeSize.height;
+  const folderLeft = folderPosition.x;
+  const folderRight = folderPosition.x + folderSize.width;
+  const folderTop = folderPosition.y;
+  const folderBottom = folderPosition.y + folderSize.height;
+  const overlapX = Math.max(0, Math.min(nodeRight, folderRight) - Math.max(nodeLeft, folderLeft));
+  const overlapY = Math.max(0, Math.min(nodeBottom, folderBottom) - Math.max(nodeTop, folderTop));
+  const overlapArea = overlapX * overlapY;
+  const nodeArea = nodeSize.width * nodeSize.height;
+  return overlapArea / nodeArea > 0.5;
 }

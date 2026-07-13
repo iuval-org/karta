@@ -92,7 +92,7 @@ export function useKeyboardShortcuts() {
           e.preventDefault();
           const cs = useCanvasStore.getState();
           cs.setSelectedNodeIds(
-            cs.nodes.filter((n) => !n.parentId).map((n) => n.id),
+            cs.nodes.map((n) => n.id),
           );
           return;
         }

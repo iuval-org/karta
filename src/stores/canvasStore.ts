@@ -23,7 +23,7 @@ import { db } from '../services/db';
 import type { NodePosition, StoredEdge } from '../services/db';
 import { useToastStore } from './toastStore';
 import { useRootStore } from './rootStore';
-import { findContainingFolder } from '../utils/folderBounds';
+import { findContainingFolder, isOverlappingFolder } from '../utils/folderBounds';
 import { syncFolder as syncFolderService } from '../services/sync';
 import type { SyncResult } from '../services/sync';
 import {
@@ -967,29 +967,39 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   onNodeDragStart: (_event: unknown, node: Node) => {
     if (node.type === 'folderNode') {
       const state = get();
-      // Use parentId from Drive items instead of positional bounds detection.
-      // Bounds-based detection (getChildrenInFolder) picks up items near or
-      // overlapping the folder's visual area that aren't actual children,
-      // causing items outside the folder to move when dragging a folder.
-      const childIds = state.allItems
-        .filter((item) => item.parentId === node.id)
-        .map((item) => item.id);
+      const allNodes = get().nodes;
+      // Use bounds-based overlap detection (isOverlappingFolder) to find
+      // nodes that visually belong to this folder at drag start (>50% overlap).
+      const storeNode = allNodes.find(n => n.id === node.id);
+      const folderPos = storeNode?.position ?? node.position;
+      const folderWidth = (storeNode as any)?.width ?? (storeNode as any)?.measured?.width ?? (node as any).width ?? 640;
+      const folderHeight = (storeNode as any)?.height ?? (storeNode as any)?.measured?.height ?? (node as any).height ?? 320;
+
+      const childIds = allNodes
+        .filter(n => n.id !== node.id)
+        .filter(n => {
+          const nWidth = (n as any)?.width ?? (n as any)?.measured?.width ?? 180;
+          const nHeight = (n as any)?.height ?? (n as any)?.measured?.height ?? (n.type === 'folderNode' ? 320 : 170);
+          return isOverlappingFolder(
+            n.position,
+            { width: nWidth, height: nHeight },
+            folderPos,
+            { width: folderWidth, height: folderHeight },
+          );
+        })
+        .map(n => n.id);
       const origins = { ...state.folderDragOrigins };
-      // Read dimensions from the store node — it has the most reliable
-      // measured width/height (the event node may not have them populated yet).
-      const storeNode = get().nodes.find(n => n.id === node.id);
       origins[node.id] = {
         x: node.position.x,
         y: node.position.y,
-        width: (storeNode as any)?.width ?? (storeNode as any)?.measured?.width ?? (node as any).width ?? undefined,
-        height: (storeNode as any)?.height ?? (storeNode as any)?.measured?.height ?? (node as any).height ?? undefined,
+        width: folderWidth,
+        height: folderHeight,
       };
 
       // Capture children's original positions. Used during drag to keep
       // children following the folder in real-time, and on drag stop to
       // compute final positions as `origin + delta` (avoids double-movement
       // from multi-selection drag in Canvas.tsx).
-      const allNodes = get().nodes;
       const childOrigins: Record<string, { x: number; y: number }> = {};
       for (const childId of childIds) {
         const childNode = allNodes.find(n => n.id === childId);

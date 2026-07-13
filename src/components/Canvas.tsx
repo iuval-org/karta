@@ -90,42 +90,27 @@ function Flow() {
 
   /* ── Filter visible nodes ────────────────────────────────────── */
   // All nodes are root-level. Nodes inside a collapsed folder are hidden.
-  // Children of expanded folders are hidden if they fall outside the
-  // folder's bounding box (visual clipping).
   const visibleNodes = nodes.filter((node) => {
     if (node.type === 'folderNode') return true;
 
-    // Find the DriveItem for this node to check its parentId
-    const driveItem = allItems.find((i) => i.id === node.id);
-    if (!driveItem?.parentId) return true; // root-level items always visible
-
-    // Direct children of the root Drive folder are always visible.
-    const rootFolderId = useRootStore.getState().rootFolderId;
-    if (rootFolderId && driveItem.parentId === rootFolderId) return true;
-
-    // Only show items whose parent folder is expanded.
-    if (expandedFolders[driveItem.parentId] !== true) return false;
-
-    // Parent is expanded — check if this child falls within the folder's
-    // bounding box. Children outside are clipped (hidden).
-    const parentNode = nodes.find((n) => n.id === driveItem.parentId);
-    if (!parentNode) return false;
-
-    const parentSize = {
-      width: (parentNode as any).width ?? (parentNode as any).measured?.width ?? 640,
-      height: (parentNode as any).height ?? (parentNode as any).measured?.height ?? 320,
-    };
-    const childSize = {
-      width: (node as any).width ?? (node as any).measured?.width ?? 180,
-      height: (node as any).height ?? (node as any).measured?.height ?? 170,
-    };
-
-    return isInsideFolder(
-      node.position,
-      childSize,
-      parentNode.position,
-      parentSize,
-    );
+    // Hide nodes whose center point is inside any collapsed folder.
+    for (const folder of nodes) {
+      if (folder.type !== 'folderNode') continue;
+      if (expandedFolders[folder.id]) continue;
+      const folderPos = folder.position ?? { x: 0, y: 0 };
+      const folderSize = {
+        width: (folder as any).width ?? (folder as any).measured?.width ?? 640,
+        height: (folder as any).height ?? (folder as any).measured?.height ?? 320,
+      };
+      const childSize = {
+        width: (node as any).width ?? (node as any).measured?.width ?? 180,
+        height: (node as any).height ?? (node as any).measured?.height ?? 170,
+      };
+      if (isInsideFolder(node.position, childSize, folderPos, folderSize)) {
+        return false;
+      }
+    }
+    return true;
   });
 
   const initialized = nodes.length > 0;
