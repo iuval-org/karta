@@ -58,6 +58,12 @@ const DRAG_ITEMS: DragItem[] = [
     color: 'text-orange-500',
     icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="16" height="16"><path fillRule="evenodd" d="M2 3.75A.75.75 0 012.75 3h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 3.75zm0 4.167a.75.75 0 01.75-.75h14.5a.75.75 0 010 1.5H2.75a.75.75 0 01-.75-.75zm0 4.166a.75.75 0 01.75-.75h14.5a.75.75 0 010 1.5H2.75a.75.75 0 01-.75-.75zm0 4.167a.75.75 0 01.75-.75h14.5a.75.75 0 010 1.5H2.75a.75.75 0 01-.75-.75z" clipRule="evenodd"/></svg>`,
   },
+  {
+    label: 'Nota adhesiva',
+    mimeType: 'application/x-karta-sticky-note',
+    color: 'text-yellow-500',
+    icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="16" height="16"><rect x="3" y="3" width="14" height="14" rx="2" fill="#FEF08A" stroke="#EAB308" strokeWidth="1"/><path d="M3 8h14M8 3v14" stroke="#EAB308" strokeWidth="0.5" fill="none"/></svg>`,
+  },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -515,7 +521,11 @@ export default function Sidebar({
                       key={item.mimeType}
                       draggable
                       onDragStart={(e) => {
-                        e.dataTransfer.setData('application/karta-type', item.mimeType);
+                        if (item.mimeType === 'application/x-karta-sticky-note') {
+                          e.dataTransfer.setData('application/x-karta-sticky-note', 'true');
+                        } else {
+                          e.dataTransfer.setData('application/karta-type', item.mimeType);
+                        }
                         e.dataTransfer.effectAllowed = 'copy';
 
                         // Color de acento por tipo
@@ -524,6 +534,7 @@ export default function Sidebar({
                           'application/vnd.google-apps.document': '#2563EB',
                           'application/vnd.google-apps.spreadsheet': '#059669',
                           'application/vnd.google-apps.presentation': '#EA580C',
+                          'application/x-karta-sticky-note': '#EAB308',
                         };
                         const accent = ACCENT[item.mimeType] ?? '#3B82F6';
 

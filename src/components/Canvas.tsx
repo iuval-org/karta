@@ -20,6 +20,7 @@ import { usePreferencesStore } from '../stores/preferencesStore';
 import { useViewStore } from '../stores/viewStore';
 import FileNode from '../nodes/FileNode';
 import FolderNode from '../nodes/FolderNode';
+import StickyNote from './StickyNote';
 import LoadingSkeleton from './LoadingSkeleton';
 import EmptyState from './EmptyState';
 import ErrorState from './ErrorState';
@@ -42,6 +43,7 @@ import { isInsideFolder } from '../utils/folderBounds';
 const nodeTypes = {
   fileNode: FileNode,
   folderNode: FolderNode,
+  stickyNote: StickyNote,
 };
 
 const defaultEdgeOptions = {
@@ -272,6 +274,7 @@ function Flow() {
   } | null>(null);
 
   const addNewItem = useCanvasStore((s) => s.addNewItem);
+  const addStickyNote = useCanvasStore((s) => s.addStickyNote);
   const currentFolderId = useNavigationStore((s) => s.currentFolderId);
 
   /** Determine the parent folder for new items. */
@@ -375,6 +378,16 @@ function Flow() {
           y: event.clientY,
         });
         handleFileDrop(files, position);
+        return;
+      }
+
+      const stickyNoteType = event.dataTransfer.getData('application/x-karta-sticky-note');
+      if (stickyNoteType) {
+        const position = reactFlowInstance.screenToFlowPosition({
+          x: event.clientX,
+          y: event.clientY,
+        });
+        addStickyNote(position);
         return;
       }
 

@@ -40,7 +40,8 @@ export default function Toolbar({ rootFolderName, onOpenSettings }: ToolbarProps
   const syncFolder = useCanvasStore((s) => s.syncFolder);
   const isSyncing = useCanvasStore((s) => s.isSyncing);
   const isOnline = useConnectivityStore((s) => s.isOnline);
-  const { fitView } = useReactFlow();
+  const addStickyNote = useCanvasStore((s) => s.addStickyNote);
+  const { fitView, screenToFlowPosition } = useReactFlow();
   const showBreadcrumb = usePreferencesStore((s) => s.showBreadcrumb);
 
   const query = useSearchStore((s) => s.query);
@@ -103,6 +104,26 @@ export default function Toolbar({ rootFolderName, onOpenSettings }: ToolbarProps
             dangerouslySetInnerHTML={{ __html: GRID_ICON }}
           />
           <span className="font-body">Reorganizar</span>
+        </button>
+
+        {/* Sticky note button */}
+        <button
+          onClick={() => {
+            const el = document.querySelector('.react-flow__viewport');
+            if (el) {
+              const rect = el.getBoundingClientRect();
+              const position = screenToFlowPosition({
+                x: rect.left + rect.width / 2,
+                y: rect.top + rect.height / 2,
+              });
+              addStickyNote(position);
+            }
+          }}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-md cursor-pointer border border-gray-200 motion-safe:transition-[color,background-color]"
+          title="Agregar nota adhesiva"
+        >
+          <span className="w-3.5 h-3.5 rounded-sm shrink-0" style={{ backgroundColor: '#FEF08A', border: '1px solid #EAB308' }} />
+          <span className="font-body">Nota</span>
         </button>
 
         <button

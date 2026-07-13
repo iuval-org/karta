@@ -179,6 +179,11 @@ interface CanvasState {
   addNewItem: (driveItem: DriveItem, position?: { x: number; y: number }) => void;
 
   /**
+   * Create a new sticky note on the canvas at the given position.
+   */
+  addStickyNote: (position: { x: number; y: number }) => string;
+
+  /**
    * Move an item (file or folder) into a target folder.
    * Returns true on success, false on failure (toast shown automatically).
    * Handles validation, Drive API call, local state updates, and persistence.
@@ -757,8 +762,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   applyGridLayout: () => {
     const { nodes } = get();
 
-    // All nodes are root-level — layout all of them
-    const items: DriveItem[] = nodes.map((n) => n.data.driveItem);
+    const items: DriveItem[] = nodes
+      .filter((n) => n.type !== 'stickyNote')
+      .map((n) => n.data.driveItem);
     const gridNodes = calcGridLayout(items);
 
     const updatedNodes: Node<CanvasNodeData>[] = nodes.map((n) => {
@@ -1600,6 +1606,48 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       persistState.expandedFolders,
       persistenceScope(persistState.activeTabId, persistState.currentFolderId),
     );
+  },
+
+  /* ── Sticky note ────────────────────────────────────────────── */
+
+  addStickyNote: (position: { x: number; y: number }) => {
+    const { nodes } = get();
+    const id = `sticky-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const now = new Date().toISOString();
+
+    const newNode: Node<Record<string, unknown>> = {
+      id,
+      type: 'stickyNote',
+      position,
+      data: {
+        text: '',
+        color: 'yellow',
+        author: 'K',
+        createdAt: now,
+      },
+      deletable: false,
+      width: 180,
+      height: 180,
+      selected: true,
+    };
+
+    const updatedNodes = nodes.map((n) => ({ ...n, selected: false })) as Node<CanvasNodeData>[];
+    updatedNodes.push(newNode as unknown as Node<CanvasNodeData>);
+
+    set({
+      nodes: updatedNodes,
+      selectedNodeId: id,
+    });
+
+    const persistState = get();
+    debouncedPersist(
+      persistState.nodes,
+      persistState.edges,
+      persistState.expandedFolders,
+      persistenceScope(persistState.activeTabId, persistState.currentFolderId),
+    );
+
+    return id;
   },
 
   /* ── Remove items (trash from canvas) ────────────────────────── */
