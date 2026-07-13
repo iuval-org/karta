@@ -22,3 +22,10 @@ export const STICKY_NOTE_HEADER_COLORS = {
 } as const;
 
 export type StickyNoteColor = keyof typeof STICKY_NOTE_COLORS;
+
+export interface TextBoxData {
+  text: string;
+  fontSize: number;
+  fontWeight: string;
+  textAlign: 'left' | 'center' | 'right';
+}

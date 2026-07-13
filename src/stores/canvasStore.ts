@@ -184,6 +184,11 @@ interface CanvasState {
   addStickyNote: (position: { x: number; y: number }) => string;
 
   /**
+   * Create a new text box on the canvas at the given position.
+   */
+  addTextBox: (position: { x: number; y: number }) => string;
+
+  /**
    * Move an item (file or folder) into a target folder.
    * Returns true on success, false on failure (toast shown automatically).
    * Handles validation, Drive API call, local state updates, and persistence.
@@ -763,7 +768,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const { nodes } = get();
 
     const items: DriveItem[] = nodes
-      .filter((n) => n.type !== 'stickyNote')
+      .filter((n) => n.type !== 'stickyNote' && n.type !== 'textBox')
       .map((n) => n.data.driveItem);
     const gridNodes = calcGridLayout(items);
 
@@ -1628,6 +1633,45 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       deletable: false,
       width: 180,
       height: 180,
+      selected: true,
+    };
+
+    const updatedNodes = nodes.map((n) => ({ ...n, selected: false })) as Node<CanvasNodeData>[];
+    updatedNodes.push(newNode as unknown as Node<CanvasNodeData>);
+
+    set({
+      nodes: updatedNodes,
+      selectedNodeId: id,
+    });
+
+    const persistState = get();
+    debouncedPersist(
+      persistState.nodes,
+      persistState.edges,
+      persistState.expandedFolders,
+      persistenceScope(persistState.activeTabId, persistState.currentFolderId),
+    );
+
+    return id;
+  },
+
+  addTextBox: (position: { x: number; y: number }) => {
+    const { nodes } = get();
+    const id = `text-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    const newNode: Node<Record<string, unknown>> = {
+      id,
+      type: 'textBox',
+      position,
+      data: {
+        text: '',
+        fontSize: 16,
+        fontWeight: 'normal',
+        textAlign: 'left',
+      },
+      deletable: false,
+      width: 200,
+      height: 60,
       selected: true,
     };
 

@@ -21,6 +21,7 @@ import { useViewStore } from '../stores/viewStore';
 import FileNode from '../nodes/FileNode';
 import FolderNode from '../nodes/FolderNode';
 import StickyNote from './StickyNote';
+import TextBox from './TextBox';
 import LoadingSkeleton from './LoadingSkeleton';
 import EmptyState from './EmptyState';
 import ErrorState from './ErrorState';
@@ -44,6 +45,7 @@ const nodeTypes = {
   fileNode: FileNode,
   folderNode: FolderNode,
   stickyNote: StickyNote,
+  textBox: TextBox,
 };
 
 const defaultEdgeOptions = {
@@ -275,6 +277,7 @@ function Flow() {
 
   const addNewItem = useCanvasStore((s) => s.addNewItem);
   const addStickyNote = useCanvasStore((s) => s.addStickyNote);
+  const addTextBox = useCanvasStore((s) => s.addTextBox);
   const currentFolderId = useNavigationStore((s) => s.currentFolderId);
 
   /** Determine the parent folder for new items. */
@@ -388,6 +391,16 @@ function Flow() {
           y: event.clientY,
         });
         addStickyNote(position);
+        return;
+      }
+
+      const textBoxType = event.dataTransfer.getData('application/x-karta-text-box');
+      if (textBoxType) {
+        const position = reactFlowInstance.screenToFlowPosition({
+          x: event.clientX,
+          y: event.clientY,
+        });
+        addTextBox(position);
         return;
       }
 

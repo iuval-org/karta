@@ -64,6 +64,12 @@ const DRAG_ITEMS: DragItem[] = [
     color: 'text-yellow-500',
     icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="16" height="16"><rect x="3" y="3" width="14" height="14" rx="2" fill="#FEF08A" stroke="#EAB308" strokeWidth="1"/><path d="M3 8h14M8 3v14" stroke="#EAB308" strokeWidth="0.5" fill="none"/></svg>`,
   },
+  {
+    label: 'Texto',
+    mimeType: 'application/x-karta-text-box',
+    color: 'text-gray-700',
+    icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="16" height="16"><path fillRule="evenodd" d="M4.125 3C3.089 3 2.25 3.84 2.25 4.875V5.5a.75.75 0 001.5 0v-.625c0-.207.168-.375.375-.375h11.75c.207 0 .375.168.375.375V5.5a.75.75 0 001.5 0v-.625C17.25 3.839 16.41 3 15.375 3H4.125zM10 5a.75.75 0 01.75.75v9.75l2.47-2.47a.75.75 0 111.06 1.06l-3.75 3.75a.75.75 0 01-1.06 0l-3.75-3.75a.75.75 0 111.06-1.06l2.47 2.47V5.75A.75.75 0 0110 5z" clipRule="evenodd"/></svg>`,
+  },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -523,6 +529,8 @@ export default function Sidebar({
                       onDragStart={(e) => {
                         if (item.mimeType === 'application/x-karta-sticky-note') {
                           e.dataTransfer.setData('application/x-karta-sticky-note', 'true');
+                        } else if (item.mimeType === 'application/x-karta-text-box') {
+                          e.dataTransfer.setData('application/x-karta-text-box', 'true');
                         } else {
                           e.dataTransfer.setData('application/karta-type', item.mimeType);
                         }
@@ -535,6 +543,7 @@ export default function Sidebar({
                           'application/vnd.google-apps.spreadsheet': '#059669',
                           'application/vnd.google-apps.presentation': '#EA580C',
                           'application/x-karta-sticky-note': '#EAB308',
+                          'application/x-karta-text-box': '#6B7280',
                         };
                         const accent = ACCENT[item.mimeType] ?? '#3B82F6';
 
