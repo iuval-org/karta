@@ -5,6 +5,7 @@ import { useTabStore } from '../stores/tabStore';
 import { useCanvasStore } from '../stores/canvasStore';
 import { useSidebarStore } from '../stores/sidebarStore';
 import { useShortcutStore } from '../stores/shortcutStore';
+import { usePreviewStore } from '../stores/previewStore';
 import { useToastStore } from '../stores/toastStore';
 
 /**
@@ -179,6 +180,24 @@ export function useKeyboardShortcuts() {
               type: 'info',
               message: 'Seleccioná solo un archivo para renombrar.',
             });
+          }
+          return;
+        }
+
+        case 'p': {
+          e.preventDefault();
+          const cs = useCanvasStore.getState();
+          const selected = cs.selectedNodeIds;
+          if (selected.length === 1) {
+            const node = cs.nodes.find((n) => n.id === selected[0]);
+            if (node) {
+              const item = (node.data as any).driveItem;
+              if (item && !item.isFolder) {
+                const allItems = cs.allItems;
+                const fileItems = allItems.filter((i: any) => !i.isFolder);
+                usePreviewStore.getState().open(item, fileItems);
+              }
+            }
           }
           return;
         }

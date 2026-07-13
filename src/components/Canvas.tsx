@@ -27,6 +27,7 @@ import { useAuthStore } from '../stores/authStore';
 import { useToastStore } from '../stores/toastStore';
 import { useNavigationStore } from '../stores/navigationStore';
 import { useRootStore } from '../stores/rootStore';
+import FilePreview from './FilePreview';
 import { createItem, CREATE_MIME_TYPES } from '../services/drive';
 import { uploadFile, isFileTooLarge, MAX_UPLOAD_SIZE } from '../services/upload';
 import ConfirmModal from './ConfirmModal';
@@ -700,6 +701,9 @@ function Flow() {
           </div>
         </div>
       )}
+
+      {/* ── File Preview ── */}
+      <FilePreview />
 
       {/* ── edge tooltip ── */}
       {hoveredEdge && hoverPos && (() => {

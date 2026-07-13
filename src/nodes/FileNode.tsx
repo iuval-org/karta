@@ -10,6 +10,7 @@ import { createPortal } from 'react-dom';
 import { Handle, Position, useStore, type NodeProps } from '@xyflow/react';
 import type { CanvasNodeData } from '../stores/canvasStore';
 import { useCanvasStore } from '../stores/canvasStore';
+import { usePreviewStore } from '../stores/previewStore';
 import { getFileTypeIcon } from '../types/mime';
 import { validateFileName } from '../utils/validation';
 import { downloadFile } from '../services/download';
@@ -39,6 +40,8 @@ const ICONS: IconSet = {
   audio: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="20" height="20"><path d="M18 3a1 1 0 01.993.883L19 4v12a1 1 0 01-1.993.117L17 16V4a1 1 0 011-1z"/><path d="M5.5 5.5A.5.5 0 016 5h3a.5.5 0 01.5.5v9a.5.5 0 01-.5.5H6a.5.5 0 01-.5-.5v-9z"/><path d="M2 7.5A.5.5 0 012.5 7h1a.5.5 0 01.5.5v5a.5.5 0 01-.5.5h-1a.5.5 0 01-.5-.5v-5z"/></svg>`,
 
   file: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="20" height="20"><path d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z"/></svg>`,
+
+  eye: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="16" height="16"><path d="M10 12.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z"/><path fillRule="evenodd" d="M.664 10.59a1.651 1.651 0 010-1.186A10.004 10.004 0 0110 3c4.257 0 7.893 2.66 9.336 6.41.147.381.146.804 0 1.186A10.004 10.004 0 0110 17c-4.257 0-7.893-2.66-9.336-6.41zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clipRule="evenodd"/></svg>`,
 };
 
 /* ------------------------------------------------------------------ */
@@ -132,6 +135,12 @@ function FileNode({ id, data, selected }: NodeProps) {
       window.open(item.webViewLink, '_blank');
     }
   }, [item.webViewLink]);
+
+  const openPreview = useCallback(() => {
+    const allItems = useCanvasStore.getState().allItems;
+    const fileItems = allItems.filter((i) => !i.isFolder);
+    usePreviewStore.getState().open(item, fileItems);
+  }, [item]);
 
   /* ── inline rename ──────────────────────────────────────────── */
 
@@ -359,7 +368,7 @@ function FileNode({ id, data, selected }: NodeProps) {
   return (
     <div
       className={`relative w-[180px] bg-white border rounded-xl shadow-sm motion-safe:transition-all select-none ${borderClass} ${opacityClass} ${removingClass}`}
-      onDoubleClick={openInDrive}
+      onDoubleClick={openPreview}
       onContextMenu={handleContextMenu}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
@@ -388,7 +397,7 @@ function FileNode({ id, data, selected }: NodeProps) {
       {/* ── body ── */}
       <div className="p-2.5 space-y-1.5">
         {/* thumbnail or MIME icon */}
-        <div className="w-full aspect-[16/10] rounded-lg overflow-hidden bg-gray-50 flex items-center justify-center">
+        <div className="relative w-full aspect-[16/10] rounded-lg overflow-hidden bg-gray-50 flex items-center justify-center">
           {hasThumb ? (
             <img
               src={item.thumbnailLink}
@@ -402,6 +411,20 @@ function FileNode({ id, data, selected }: NodeProps) {
               dangerouslySetInnerHTML={{ __html: svgHtml }}
             />
           )}
+          {/* preview button — visible on hover */}
+          <button
+            onClick={(e) => { e.stopPropagation(); openPreview(); }}
+            className={`absolute top-1.5 right-1.5 flex items-center justify-center w-7 h-7 bg-white/90 rounded-lg shadow motion-safe:transition-opacity ${
+              isHovered ? 'opacity-100' : 'opacity-0'
+            } hover:bg-white active:scale-[0.97] cursor-pointer`}
+            title="Vista previa"
+            aria-label="Vista previa"
+          >
+            <span
+              className="text-gray-600"
+              dangerouslySetInnerHTML={{ __html: ICONS.eye }}
+            />
+          </button>
         </div>
 
         {/* file name — Nunito 700 — double-click to rename */}

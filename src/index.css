@@ -81,6 +81,8 @@
   }
 }
 
+.preview-overlay { animation: fadeIn 150ms ease-out; }
+
 @keyframes scaleIn {
   from {
     opacity: 0;
