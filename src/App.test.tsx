@@ -84,8 +84,6 @@ vi.mock('./stores/rootStore', () => {
 
 const mockLoadItems = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const mockResetLayout = vi.hoisted(() => vi.fn());
-const mockInitFirestoreSync = vi.hoisted(() => vi.fn());
-const mockCleanupFirestoreSync = vi.hoisted(() => vi.fn());
 
 vi.mock('./stores/canvasStore', () => {
   const { useStore } = createMockStore(() => ({
@@ -98,8 +96,7 @@ vi.mock('./stores/canvasStore', () => {
     layout: 'grid',
     loadItems: mockLoadItems,
     resetLayout: mockResetLayout,
-    initFirestoreSync: mockInitFirestoreSync,
-    cleanupFirestoreSync: mockCleanupFirestoreSync,
+
   }));
 
   return { useCanvasStore: useStore };

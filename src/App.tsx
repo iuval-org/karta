@@ -52,19 +52,14 @@ function AppContent() {
       loadTabs();
       hydrateSidebar();
       loadPreferences();
-      // Initialize Firestore real-time sync for multi-device position sync
-      useCanvasStore.getState().initFirestoreSync();
       // Resume any pending Drive operations from Dexie
       operationQueue.resumeFromStorage().catch((err) => {
         console.warn('[App] Error resuming operation queue:', err);
       });
     }
 
-    // Clean up Firestore subscription on logout
     return () => {
-      if (!useAuthStore.getState().user) {
-        useCanvasStore.getState().cleanupFirestoreSync();
-      }
+      // noop
     };
   }, [user, hydrate, loadTabs, hydrateSidebar, loadPreferences]);
 

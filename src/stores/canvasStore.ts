@@ -27,14 +27,9 @@ import { useRootStore } from './rootStore';
 import { findContainingFolder, isOverlappingFolder } from '../utils/folderBounds';
 import { syncFolder as syncFolderService } from '../services/sync';
 import type { SyncResult } from '../services/sync';
-import {
-  syncToFirestore,
-  syncFromFirestore,
-  onRemoteChange,
-  removePositionsByScope,
-} from '../services/firestoreSync';
 import { useAuthStore } from './authStore';
-import type { Unsubscribe } from 'firebase/firestore';
+import { serializeCanvas, deserializeCanvas, filterNodesByFolder } from '../utils/canvasSerializer';
+import { readCanvasState, writeCanvasState } from '../services/kartaStorage';
 
 export interface CanvasNodeData {
   driveItem: DriveItem;
@@ -63,14 +58,6 @@ interface CanvasState {
   setUploadProgress: (progress: number) => void;
   /** Resetea el estado de subida. */
   clearUploadState: () => void;
-
-  /** Active Firestore onSnapshot subscription (cleanup on unmount/logout). */
-  _firestoreUnsubscribe: Unsubscribe | null;
-
-  /** Initialize Firestore real-time sync subscription. */
-  initFirestoreSync: () => void;
-  /** Clean up Firestore real-time sync subscription. */
-  cleanupFirestoreSync: () => void;
 
   /** All items (all levels), populated at load time. */
   allItems: DriveItem[];
@@ -372,11 +359,14 @@ const debouncedPersist = debounce(
     await Promise.all(dbOperations);
     console.log('[PERSIST] save completed');
 
-    // ── Sync to Firestore (background, non-blocking) ─────────────
+    // ── Sync to Google Drive ._karta/state.json (background, non-blocking) ──
     const user = useAuthStore.getState().user;
     if (user) {
-      syncToFirestore(user.uid, rootNodePositions).catch((err) => {
-        console.warn('[PERSIST] Firestore sync error (non-fatal):', err);
+      const folderId = useCanvasStore.getState().currentFolderId || 'root';
+      const folderNodes = filterNodesByFolder(nodes, folderId);
+      const state = serializeCanvas(folderNodes, []);
+      writeCanvasState(folderId, state).catch((err) => {
+        console.warn('[PERSIST] Drive sync error (non-fatal):', err);
       });
     }
   },
@@ -411,8 +401,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   isSyncing: false,
   isUploading: false,
   uploadProgress: 0,
-  _firestoreUnsubscribe: null,
-
   /* ── load ──────────────────────────────────────────────────── */
 
   loadItems: async (folderId: string) => {
@@ -487,7 +475,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }
   },
 
-  /* ── Hydration: Firestore first, Dexie fallback ──────────── */
+  /* ── Hydration: Google Drive first, Dexie fallback ──────────── */
 
   hydrateFromDexie: async (scope?: string) => {
     const { allItems, activeTabId, currentFolderId } = get();
@@ -495,31 +483,30 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
     const currentScope = scope ?? persistenceScope(activeTabId, currentFolderId);
 
-    // ── Try Firestore first ──────────────────────────────────
-    const user = useAuthStore.getState().user;
-    let savedPositions = await syncFromFirestore(user?.uid ?? '', currentScope);
+    // ── Try Google Drive first ──────────────────────────────────
+    const driveState = await readCanvasState(currentFolderId || 'root');
+    let savedPositions: NodePosition[] = [];
 
-    // If Firestore has positions, log and use them
-    if (savedPositions.length > 0) {
-      console.log('[HYDRATE] loaded from Firestore:', {
+    if (driveState && driveState.nodes.length > 0) {
+      const { nodes: restoredNodes } = deserializeCanvas(driveState);
+      savedPositions = restoredNodes.map((n) => ({
+        fileId: n.id,
+        x: n.position.x,
+        y: n.position.y,
+        zIndex: n.zIndex,
+        tabId: currentScope,
+      }));
+      console.log('[HYDRATE] loaded from Google Drive:', {
         scope: currentScope,
         count: savedPositions.length,
       });
     } else {
       // ── Fallback: Dexie ────────────────────────────────────
       savedPositions = await db.positions.filter(p => p.tabId === currentScope).toArray();
-      console.log('[HYDRATE] loaded from Dexie (Firestore empty/unavailable):', {
+      console.log('[HYDRATE] loaded from Dexie:', {
         scope: currentScope,
         count: savedPositions.length,
       });
-
-      // Catch-up sync: push Dexie data to Firestore so next load
-      // from another device picks it up. Fire-and-forget.
-      if (user && savedPositions.length > 0) {
-        syncToFirestore(user.uid, savedPositions).catch((err) => {
-          console.warn('[HYDRATE] catch-up sync to Firestore failed (non-fatal):', err);
-        });
-      }
     }
 
     const [savedEdges, savedFolderStates] = await Promise.all([
@@ -572,30 +559,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     });
 
     console.log('[HYDRATE] complete — nodes:', get().nodes.length, 'expanded:', Object.keys(expandedFolders).length);
-
-    // ── Subscribe to real-time Firestore changes ─────────────
-    if (user) {
-      get().cleanupFirestoreSync(); // Clean up any previous subscription
-      const unsub = onRemoteChange(user.uid, (remotePositions) => {
-        const currentNodes = get().nodes;
-      const remotePosMap = new Map(
-        remotePositions.map((p) => [p.fileId, { x: p.x, y: p.y, zIndex: p.zIndex }]),
-      );
-
-      const mergedNodes = currentNodes.map((n) => {
-        const pos = remotePosMap.get(n.id);
-        if (pos) {
-          return { ...n, position: pos, zIndex: pos.zIndex ?? n.zIndex };
-        }
-        return n;
-      });
-
-      set({ nodes: mergedNodes });
-      console.log('[HYDRATE] real-time update applied:', remotePositions.length, 'positions');
-    }, currentScope);
-
-      set({ _firestoreUnsubscribe: unsub });
-    }
   },
 
   /* ── persistent save (immediate, not debounced) ───────────── */
@@ -648,11 +611,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     await Promise.all(dbOps);
     console.log('[persistNow] Dexie save complete');
 
-    // ── Sync to Firestore (background, non-blocking) ─────────────
+    // ── Sync to Google Drive ._karta/state.json (background, non-blocking) ──
     const user = useAuthStore.getState().user;
     if (user) {
-      syncToFirestore(user.uid, allNodePositions).catch((err) => {
-        console.warn('[persistNow] Firestore sync error (non-fatal):', err);
+      const folderId = get().currentFolderId || 'root';
+      const folderNodes = filterNodesByFolder(nodes, folderId);
+      const state = serializeCanvas(folderNodes, edges);
+      writeCanvasState(folderId, state).catch((err) => {
+        console.warn('[persistNow] Drive sync error (non-fatal):', err);
       });
     }
   },
@@ -756,14 +722,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const scope = persistenceScope(activeTabId, currentFolderId);
     db.positions.filter(p => p.tabId === scope).delete();
     db.folderState.filter(fs => fs.tabId === scope).delete();
-
-    // Also remove from Firestore
-    const user = useAuthStore.getState().user;
-    if (user) {
-      removePositionsByScope(user.uid, scope).catch((err) => {
-        console.warn('[resetLayout] Firestore cleanup error:', err);
-      });
-    }
 
     set({ expandedFolders: {}, expandedFolderDims: {} });
 
@@ -1825,46 +1783,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         });
       }
     }, 300);
-  },
-
-  /* ── Firestore sync lifecycle ─────────────────────────────── */
-
-  initFirestoreSync: () => {
-    const { activeTabId, currentFolderId, _firestoreUnsubscribe } = get();
-    if (_firestoreUnsubscribe) {
-      _firestoreUnsubscribe();
-    }
-
-    const user = useAuthStore.getState().user;
-    if (!user) return;
-
-    const scope = persistenceScope(activeTabId, currentFolderId);
-    const unsub = onRemoteChange(user.uid, (remotePositions) => {
-      const currentNodes = get().nodes;
-      const remotePosMap = new Map(
-        remotePositions.map((p) => [p.fileId, { x: p.x, y: p.y }]),
-      );
-
-      const mergedNodes = currentNodes.map((n) => {
-        const pos = remotePosMap.get(n.id);
-        if (pos) {
-          return { ...n, position: pos };
-        }
-        return n;
-      });
-
-      set({ nodes: mergedNodes });
-    }, scope);
-
-    set({ _firestoreUnsubscribe: unsub });
-  },
-
-  cleanupFirestoreSync: () => {
-    const { _firestoreUnsubscribe } = get();
-    if (_firestoreUnsubscribe) {
-      _firestoreUnsubscribe();
-      set({ _firestoreUnsubscribe: null });
-    }
   },
 
   /* ── Z-index (traer al frente / enviar atrás) ─────────────────── */
