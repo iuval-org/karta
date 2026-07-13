@@ -5,6 +5,7 @@ import { useSidebarStore } from '../stores/sidebarStore';
 import { useSearchStore } from '../stores/searchStore';
 import { usePreferencesStore } from '../stores/preferencesStore';
 import { useConnectivityStore } from '../stores/connectivityStore';
+import { useCommentStore } from '../stores/commentStore';
 import UserMenu from './UserMenu';
 
 /* ------------------------------------------------------------------ */
@@ -50,6 +51,8 @@ export default function Toolbar({ rootFolderName, onOpenSettings }: ToolbarProps
   const setQuery = useSearchStore((s) => s.setQuery);
   const search = useSearchStore((s) => s.search);
   const clearSearch = useSearchStore((s) => s.clearSearch);
+  const commentMode = useCommentStore((s) => s.commentMode);
+  const toggleCommentMode = useCommentStore((s) => s.toggleCommentMode);
   const inputRef = useRef<HTMLInputElement>(null);
   const allItems = useCanvasStore((s) => s.allItems);
   const rootFolderId = allItems[0]?.id ?? 'root';
@@ -255,6 +258,22 @@ export default function Toolbar({ rootFolderName, onOpenSettings }: ToolbarProps
           aria-label={panMode ? 'Modo selección' : 'Modo mover'}
         >
           <span dangerouslySetInnerHTML={{ __html: HAND_ICON }} />
+        </button>
+
+        {/* Comment mode toggle */}
+        <button
+          onClick={toggleCommentMode}
+          className={`flex items-center justify-center w-8 h-8 rounded-md cursor-pointer motion-safe:transition-[color,background-color] active:scale-[0.97] ${
+            commentMode
+              ? 'bg-red-500 text-white hover:bg-red-600'
+              : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+          }`}
+          title={commentMode ? 'Desactivar comentarios' : 'Modo comentario'}
+          aria-label={commentMode ? 'Desactivar comentarios' : 'Modo comentario'}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
+            <path fillRule="evenodd" d="M3.43 2.524A41.29 41.29 0 0110 2c2.236 0 4.43.18 6.57.524 1.437.231 2.43 1.49 2.43 2.902v5.148c0 1.413-.993 2.67-2.43 2.902a41.202 41.202 0 01-5.183.501.78.78 0 00-.528.224l-3.579 3.58A.75.75 0 016 17.25v-3.443a41.033 41.033 0 01-2.57-.33C2.07 13.244 1.07 11.986 1.07 10.573V5.426c0-1.413.993-2.67 2.43-2.902H3.43z" clipRule="evenodd" />
+          </svg>
         </button>
 
         {/* Sync button */}

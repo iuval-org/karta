@@ -1,10 +1,15 @@
 import { memo } from 'react';
 import { Handle, Position, NodeResizer, type NodeProps } from '@xyflow/react';
 import type { ShapeNodeData } from '../types/nodes';
+import { useCommentStore } from '../stores/commentStore';
+import CommentBadge from './CommentBadge';
 
-function ShapeNode({ data, selected }: NodeProps) {
+function ShapeNode({ id, data, selected }: NodeProps) {
   const shapeData = data as unknown as ShapeNodeData;
   const { shapeType, label, fillColor = '#FFFFFF', borderColor = '#D1D5DB' } = shapeData;
+
+  const commentCount = useCommentStore((s) => s.getCommentsForNode(id).length);
+  const openThread = useCommentStore((s) => s.openThread);
 
   const isCircle = shapeType === 'circle';
 
@@ -61,6 +66,8 @@ function ShapeNode({ data, selected }: NodeProps) {
         position={Position.Bottom}
         className="!opacity-0 !pointer-events-auto"
       />
+
+      <CommentBadge count={commentCount} onClick={() => openThread(id)} />
 
       {shapeType === 'rectangle' && (
         <div

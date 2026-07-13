@@ -2,6 +2,8 @@ import { memo, useCallback, useState, useRef, useEffect } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { TextBoxData } from '../types/nodes';
 import { useCanvasStore } from '../stores/canvasStore';
+import { useCommentStore } from '../stores/commentStore';
+import CommentBadge from './CommentBadge';
 import { debounce } from '../utils/debounce';
 
 const FONT_SIZES = [
@@ -124,6 +126,9 @@ function TextBox({ id, data, selected }: NodeProps) {
     debouncedSaveRef.current(text, fontSize, fontWeight, align);
   }, [text, fontSize, fontWeight]);
 
+  const commentCount = useCommentStore((s) => s.getCommentsForNode(id).length);
+  const openThread = useCommentStore((s) => s.openThread);
+
   const isEmpty = !text || text.trim() === '';
 
   const show = selected || isFocused || showToolbar;
@@ -150,6 +155,8 @@ function TextBox({ id, data, selected }: NodeProps) {
         position={Position.Bottom}
         className="!opacity-0 !pointer-events-auto"
       />
+
+      <CommentBadge count={commentCount} onClick={() => openThread(id)} />
 
       {/* Inline formatting toolbar */}
       {showToolbar && (

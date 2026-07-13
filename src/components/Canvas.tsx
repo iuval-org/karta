@@ -36,6 +36,8 @@ import ViewToggle from './ViewToggle';
 import ListView from './ListView';
 import DetailsPanel from './DetailsPanel';
 import { useDetailsStore } from '../stores/detailsStore';
+import { useCommentStore } from '../stores/commentStore';
+import CommentThread from './CommentThread';
 import GridView from './GridView';
 import { createItem, CREATE_MIME_TYPES } from '../services/drive';
 import { uploadFile, isFileTooLarge, MAX_UPLOAD_SIZE } from '../services/upload';
@@ -85,6 +87,12 @@ function Flow() {
   const logout = useAuthStore((s) => s.logout);
 
   const prefs = usePreferencesStore();
+
+  /* ── comment store ─────────────────────────────────────────── */
+  const activeThread = useCommentStore((s) => s.activeThread);
+  const openThread = useCommentStore((s) => s.openThread);
+  const commentMode = useCommentStore((s) => s.commentMode);
+  const addComment = useCommentStore((s) => s.addComment);
 
   /* ── Flush pending saves before tab close ──────────────────── */
   useEffect(() => {
@@ -483,6 +491,17 @@ function Flow() {
     setCreateModal(null);
   }, []);
 
+  /* ── double-click on empty canvas (comment mode) ───────────── */
+  const handleDoubleClick = useCallback(
+    (_event: React.MouseEvent) => {
+      if (!commentMode) return;
+      const tempNodeId = `comment_${Date.now()}`;
+      addComment(tempNodeId, 'Comentario en canvas');
+      openThread(tempNodeId);
+    },
+    [commentMode, addComment, openThread],
+  );
+
   /* ── Ctrl+N trigger from shortcutStore ─────────────────────────── */
   const pendingCreateType = useShortcutStore((s) => s.pendingCreateType);
   const clearCreateModal = useShortcutStore((s) => s.clearCreateModal);
@@ -721,6 +740,7 @@ function Flow() {
           onNodeDragStart={onNodeDragStart}
           onNodeDrag={onNodeDrag}
           onNodeDragStop={onNodeDragStop}
+          onDoubleClick={handleDoubleClick}
         >
           {prefs.showBackground && <Background variant={BackgroundVariant.Dots} gap={20} size={1} />}
           <Controls position="bottom-left" />
@@ -764,6 +784,19 @@ function Flow() {
           </div>
         </div>
       )}
+
+      {/* ── Comment thread (canvas only) ── */}
+      {mode === 'canvas' && activeThread && (() => {
+        const node = nodes.find((n) => n.id === activeThread);
+        if (!node) return null;
+        const screenPos = reactFlowInstance.flowToScreenPosition(node.position);
+        return (
+          <CommentThread
+            nodeId={activeThread}
+            position={{ x: screenPos.x + 200, y: screenPos.y - 10 }}
+          />
+        );
+      })()}
 
       {/* ── File Preview ── */}
       <FilePreview />
