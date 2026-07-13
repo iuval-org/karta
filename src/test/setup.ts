@@ -55,6 +55,7 @@ const mockGapi = {
   client: {
     setToken: vi.fn(),
     load: vi.fn().mockResolvedValue(undefined),
+    request: vi.fn().mockResolvedValue({ result: {} }),
     drive: {
       files: {
         list: vi.fn().mockResolvedValue({ result: { files: [] } }),
@@ -63,6 +64,9 @@ const mockGapi = {
         update: vi.fn().mockResolvedValue({ result: {} }),
       },
     },
+  },
+  auth: {
+    getToken: vi.fn(() => null),
   },
 };
 

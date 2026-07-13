@@ -39,6 +39,7 @@ function setMockToken(token: string | null) {
 // ---------------------------------------------------------------------------
 beforeEach(() => {
   setMockToken(null);
+  vi.clearAllMocks();
 });
 
 describe('getUseMock()', () => {
@@ -147,19 +148,21 @@ describe('createItem()', () => {
     expect(item.parentId).toBe('f1');
   });
 
-  it('real mode llama a gapi.drive.files.create', async () => {
+  it('real mode llama a gapi.client.request para crear archivo', async () => {
     setMockToken('real-token');
-    const gapiCreate = vi.mocked(window.gapi.client!.drive.files.create);
-    gapiCreate.mockResolvedValue({ result: { id: 'gapi-1', name: 'Real Doc', mimeType: 'application/vnd.google-apps.document' } });
+    const gapiRequest = vi.mocked(window.gapi.client!.request);
+    gapiRequest.mockResolvedValue({ result: { id: 'gapi-1', name: 'Real Doc', mimeType: 'application/vnd.google-apps.document' } });
 
     await createItem('Real Doc', 'application/vnd.google-apps.document', 'root');
 
-    expect(gapiCreate).toHaveBeenCalledTimes(1);
-    const [body] = gapiCreate.mock.calls[0];
-    expect(body.name).toBe('Real Doc');
-    expect(body.mimeType).toBe('application/vnd.google-apps.document');
+    expect(gapiRequest).toHaveBeenCalledTimes(1);
+    const [args] = gapiRequest.mock.calls[0];
+    expect(args.path).toBe('/drive/v3/files');
+    expect(args.method).toBe('POST');
+    expect(args.body.name).toBe('Real Doc');
+    expect(args.body.mimeType).toBe('application/vnd.google-apps.document');
     // parents should NOT be included for root
-    expect((body as Record<string, unknown>).parents).toBeUndefined();
+    expect((args.body as Record<string, unknown>).parents).toBeUndefined();
   });
 });
 
