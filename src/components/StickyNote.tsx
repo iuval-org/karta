@@ -11,8 +11,6 @@ import { Handle, Position, NodeResizer, type NodeProps } from '@xyflow/react';
 import type { StickyNoteData, StickyNoteColor } from '../types/nodes';
 import { STICKY_NOTE_COLORS, STICKY_NOTE_HEADER_COLORS } from '../types/nodes';
 import { useCanvasStore } from '../stores/canvasStore';
-import { useCommentStore } from '../stores/commentStore';
-import CommentBadge from './CommentBadge';
 import { debounce } from '../utils/debounce';
 
 const COLORS: StickyNoteColor[] = ['yellow', 'green', 'blue', 'pink', 'orange'];
@@ -131,10 +129,6 @@ function StickyNote({ id, data, selected }: NodeProps) {
       document.removeEventListener('keydown', onKey);
     };
   }, [ctxMenu, closeCtx]);
-
-  /* ── comment store ──────────────────────────────────────────── */
-  const commentCount = useCommentStore((s) => s.getCommentsForNode(id).length);
-  const openThread = useCommentStore((s) => s.openThread);
 
   const handleDelete = useCallback(() => {
     const state = useCanvasStore.getState();
@@ -278,9 +272,6 @@ function StickyNote({ id, data, selected }: NodeProps) {
           {(noteData.author || '?').charAt(0).toUpperCase()}
         </div>
       </div>
-
-      {/* Comment badge */}
-      <CommentBadge count={commentCount} onClick={() => openThread(id)} />
 
       {/* Context menu */}
       {ctxMenu && createPortal(

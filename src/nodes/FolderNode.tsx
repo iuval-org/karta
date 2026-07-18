@@ -19,8 +19,6 @@ import type { CanvasNodeData } from '../stores/canvasStore';
 import { useCanvasStore } from '../stores/canvasStore';
 import { getChildrenInFolder } from '../utils/folderBounds';
 import { useTabStore } from '../stores/tabStore';
-import { useCommentStore } from '../stores/commentStore';
-import CommentBadge from '../components/CommentBadge';
 import EmptyState from '../components/EmptyState';
 import { validateFileName } from '../utils/validation';
 import { downloadFile } from '../services/download';
@@ -147,10 +145,6 @@ function FolderNode({ id, data, selected }: NodeProps) {
   const isMultiSelected = selected && selectedNodeIds.length > 1;
   const folderHoverTarget = useCanvasStore((s) => s.folderHoverTarget);
   const isDragOver = folderHoverTarget === id && !isExpanded;
-
-  /* ── comment store ──────────────────────────────────────────── */
-  const commentCount = useCommentStore((s) => s.getCommentsForNode(id).length);
-  const openThread = useCommentStore((s) => s.openThread);
 
   /* ── Refs ── */
   const rootElRef = useRef<HTMLDivElement>(null);
@@ -688,9 +682,6 @@ function FolderNode({ id, data, selected }: NodeProps) {
           />
         </div>
       )}
-
-      {/* ── comment badge ── */}
-      <CommentBadge count={commentCount} onClick={() => openThread(id)} />
 
       {/* ── context menu ── */}
       {ctxMenu && !connectMenu && !isMultiSelected && createPortal(

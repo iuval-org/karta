@@ -13,7 +13,6 @@ import {
   type Connection,
   MarkerType,
 } from '@xyflow/react';
-import type { ShapeType } from '../types/nodes';
 import type { DriveItem } from '../types/drive';
 import { listChildren, listAllChildren, getUseMock, createItem } from '../services/drive';
 import { operationQueue } from '../services/operationQueue';
@@ -170,16 +169,6 @@ interface CanvasState {
    * Create a new sticky note on the canvas at the given position.
    */
   addStickyNote: (position: { x: number; y: number }) => string;
-
-  /**
-   * Create a new text box on the canvas at the given position.
-    */
-  addTextBox: (position: { x: number; y: number }) => string;
-
-  /**
-   * Create a new shape node on the canvas at the given position.
-   */
-  addShape: (position: { x: number; y: number }, shapeType: ShapeType) => string;
 
   /**
    * Move an item (file or folder) into a target folder.
@@ -1597,95 +1586,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       deletable: false,
       width: 180,
       height: 180,
-      selected: true,
-    };
-
-    const updatedNodes = nodes.map((n) => ({ ...n, selected: false })) as Node<CanvasNodeData>[];
-    updatedNodes.push(newNode as unknown as Node<CanvasNodeData>);
-
-    set({
-      nodes: updatedNodes,
-      selectedNodeId: id,
-    });
-
-    const persistState = get();
-    debouncedPersist(
-      persistState.nodes,
-      persistState.edges,
-      persistState.expandedFolders,
-      persistenceScope(persistState.activeTabId, persistState.currentFolderId),
-    );
-
-    return id;
-  },
-
-  addTextBox: (position: { x: number; y: number }) => {
-    const { nodes } = get();
-    const id = `text-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
-    const newNode: Node<Record<string, unknown>> = {
-      id,
-      type: 'textBox',
-      position,
-      data: {
-        text: '',
-        fontSize: 16,
-        fontWeight: 'normal',
-        textAlign: 'left',
-      },
-      deletable: false,
-      width: 200,
-      height: 60,
-      selected: true,
-    };
-
-    const updatedNodes = nodes.map((n) => ({ ...n, selected: false })) as Node<CanvasNodeData>[];
-    updatedNodes.push(newNode as unknown as Node<CanvasNodeData>);
-
-    set({
-      nodes: updatedNodes,
-      selectedNodeId: id,
-    });
-
-    const persistState = get();
-    debouncedPersist(
-      persistState.nodes,
-      persistState.edges,
-      persistState.expandedFolders,
-      persistenceScope(persistState.activeTabId, persistState.currentFolderId),
-    );
-
-    return id;
-  },
-
-  /* ── Shapes ─────────────────────────────────────────────────── */
-
-  addShape: (position: { x: number; y: number }, shapeType: ShapeType) => {
-    const { nodes } = get();
-    const id = `shape-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
-    const DIMENSIONS: Record<ShapeType, { width: number; height: number }> = {
-      rectangle: { width: 150, height: 120 },
-      circle: { width: 100, height: 100 },
-      arrow: { width: 200, height: 60 },
-      line: { width: 150, height: 6 },
-    };
-
-    const dims = DIMENSIONS[shapeType] ?? { width: 150, height: 120 };
-
-    const newNode: Node<Record<string, unknown>> = {
-      id,
-      type: 'shapeNode',
-      position,
-      data: {
-        shapeType,
-        label: shapeType.charAt(0).toUpperCase() + shapeType.slice(1),
-        fillColor: '#FFFFFF',
-        borderColor: '#D1D5DB',
-      },
-      deletable: false,
-      width: dims.width,
-      height: dims.height,
       selected: true,
     };
 

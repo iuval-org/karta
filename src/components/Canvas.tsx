@@ -21,8 +21,6 @@ import { useViewStore } from '../stores/viewStore';
 import FileNode from '../nodes/FileNode';
 import FolderNode from '../nodes/FolderNode';
 import StickyNote from './StickyNote';
-import TextBox from './TextBox';
-import ShapeNode from './ShapeNode';
 import LoadingSkeleton from './LoadingSkeleton';
 import EmptyState from './EmptyState';
 import ErrorState from './ErrorState';
@@ -36,8 +34,6 @@ import ViewToggle from './ViewToggle';
 import ListView from './ListView';
 import DetailsPanel from './DetailsPanel';
 import { useDetailsStore } from '../stores/detailsStore';
-import { useCommentStore } from '../stores/commentStore';
-import CommentThread from './CommentThread';
 import GridView from './GridView';
 import { createItem, CREATE_MIME_TYPES } from '../services/drive';
 import { uploadFile, isFileTooLarge, MAX_UPLOAD_SIZE } from '../services/upload';
@@ -48,8 +44,6 @@ const nodeTypes = {
   fileNode: FileNode,
   folderNode: FolderNode,
   stickyNote: StickyNote,
-  textBox: TextBox,
-  shapeNode: ShapeNode,
 };
 
 const defaultEdgeOptions = {
@@ -87,12 +81,6 @@ function Flow() {
   const logout = useAuthStore((s) => s.logout);
 
   const prefs = usePreferencesStore();
-
-  /* ── comment store ─────────────────────────────────────────── */
-  const activeThread = useCommentStore((s) => s.activeThread);
-  const openThread = useCommentStore((s) => s.openThread);
-  const commentMode = useCommentStore((s) => s.commentMode);
-  const addComment = useCommentStore((s) => s.addComment);
 
   /* ── Flush pending saves before tab close ──────────────────── */
   useEffect(() => {
@@ -287,8 +275,6 @@ function Flow() {
 
   const addNewItem = useCanvasStore((s) => s.addNewItem);
   const addStickyNote = useCanvasStore((s) => s.addStickyNote);
-  const addTextBox = useCanvasStore((s) => s.addTextBox);
-  const addShape = useCanvasStore((s) => s.addShape);
   const currentFolderId = useNavigationStore((s) => s.currentFolderId);
 
   /** Determine the parent folder for new items. */
@@ -405,26 +391,6 @@ function Flow() {
         return;
       }
 
-      const shapeType = event.dataTransfer.getData('application/x-karta-shape') as import('../types/nodes').ShapeType;
-      if (shapeType) {
-        const position = reactFlowInstance.screenToFlowPosition({
-          x: event.clientX,
-          y: event.clientY,
-        });
-        addShape(position, shapeType);
-        return;
-      }
-
-      const textBoxType = event.dataTransfer.getData('application/x-karta-text-box');
-      if (textBoxType) {
-        const position = reactFlowInstance.screenToFlowPosition({
-          x: event.clientX,
-          y: event.clientY,
-        });
-        addTextBox(position);
-        return;
-      }
-
       const mimeType = event.dataTransfer.getData('application/karta-type');
       if (!mimeType) return;
 
@@ -490,17 +456,6 @@ function Flow() {
   const handleCreateCancel = useCallback(() => {
     setCreateModal(null);
   }, []);
-
-  /* ── double-click on empty canvas (comment mode) ───────────── */
-  const handleDoubleClick = useCallback(
-    (_event: React.MouseEvent) => {
-      if (!commentMode) return;
-      const tempNodeId = `comment_${Date.now()}`;
-      addComment(tempNodeId, 'Comentario en canvas');
-      openThread(tempNodeId);
-    },
-    [commentMode, addComment, openThread],
-  );
 
   /* ── Ctrl+N trigger from shortcutStore ─────────────────────────── */
   const pendingCreateType = useShortcutStore((s) => s.pendingCreateType);
@@ -740,7 +695,6 @@ function Flow() {
           onNodeDragStart={onNodeDragStart}
           onNodeDrag={onNodeDrag}
           onNodeDragStop={onNodeDragStop}
-          onDoubleClick={handleDoubleClick}
         >
           {prefs.showBackground && <Background variant={BackgroundVariant.Dots} gap={20} size={1} />}
           <Controls position="bottom-left" />
@@ -784,19 +738,6 @@ function Flow() {
           </div>
         </div>
       )}
-
-      {/* ── Comment thread (canvas only) ── */}
-      {mode === 'canvas' && activeThread && (() => {
-        const node = nodes.find((n) => n.id === activeThread);
-        if (!node) return null;
-        const screenPos = reactFlowInstance.flowToScreenPosition(node.position);
-        return (
-          <CommentThread
-            nodeId={activeThread}
-            position={{ x: screenPos.x + 200, y: screenPos.y - 10 }}
-          />
-        );
-      })()}
 
       {/* ── File Preview ── */}
       <FilePreview />

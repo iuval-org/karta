@@ -11,8 +11,6 @@ import { Handle, Position, useStore, type NodeProps } from '@xyflow/react';
 import type { CanvasNodeData } from '../stores/canvasStore';
 import { useCanvasStore } from '../stores/canvasStore';
 import { usePreviewStore } from '../stores/previewStore';
-import { useCommentStore } from '../stores/commentStore';
-import CommentBadge from '../components/CommentBadge';
 import { getFileTypeIcon } from '../types/mime';
 import { validateFileName } from '../utils/validation';
 import { downloadFile } from '../services/download';
@@ -85,10 +83,6 @@ function FileNode({ id, data, selected }: NodeProps) {
   const isSearchMatch = searchHighlightedNodeIds.includes(id);
   const isRemoving = removingNodeIds.includes(id);
   const isMultiSelected = selected && selectedNodeIds.length > 1;
-
-  /* ── comment store ──────────────────────────────────────────── */
-  const commentCount = useCommentStore((s) => s.getCommentsForNode(id).length);
-  const openThread = useCommentStore((s) => s.openThread);
 
   /* ── local state ─────────────────────────────────────────────── */
   const [thumbFailed, setThumbFailed] = useState(false);
@@ -459,9 +453,6 @@ function FileNode({ id, data, selected }: NodeProps) {
           className="!w-2.5 !h-2.5 !bg-indigo-500 !border-2 !border-white !shadow-sm !relative !transform-none !top-auto !right-auto motion-safe:transition-transform motion-safe:hover:scale-125"
         />
       </div>
-
-      {/* ── comment badge ── */}
-      <CommentBadge count={commentCount} onClick={() => openThread(id)} />
 
       {/* ── context menu ── */}
       {ctxMenu && !connectMenu && !isMultiSelected && createPortal(

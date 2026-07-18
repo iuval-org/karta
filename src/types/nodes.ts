@@ -23,18 +23,4 @@ export const STICKY_NOTE_HEADER_COLORS = {
 
 export type StickyNoteColor = keyof typeof STICKY_NOTE_COLORS;
 
-export interface TextBoxData {
-  text: string;
-  fontSize: number;
-  fontWeight: string;
-  textAlign: 'left' | 'center' | 'right';
-}
 
-export type ShapeType = 'rectangle' | 'circle' | 'arrow' | 'line';
-
-export interface ShapeNodeData {
-  shapeType: ShapeType;
-  label: string;
-  fillColor: string;
-  borderColor: string;
-}
