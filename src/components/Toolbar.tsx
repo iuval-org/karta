@@ -5,8 +5,6 @@ import { useSidebarStore } from '../stores/sidebarStore';
 import { useSearchStore } from '../stores/searchStore';
 import { usePreferencesStore } from '../stores/preferencesStore';
 import { useConnectivityStore } from '../stores/connectivityStore';
-import { useCommentStore } from '../stores/commentStore';
-import UserMenu from './UserMenu';
 
 /* ------------------------------------------------------------------ */
 /*  Heroicons v2 solid 20×20 — inline SVGs                            */
@@ -30,10 +28,9 @@ const SEARCH_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"
 
 interface ToolbarProps {
   rootFolderName: string;
-  onOpenSettings?: () => void;
 }
 
-export default function Toolbar({ rootFolderName, onOpenSettings }: ToolbarProps) {
+export default function Toolbar({ rootFolderName }: ToolbarProps) {
   const toggleSidebar = useSidebarStore((s) => s.toggle);
   const resetLayout = useCanvasStore((s) => s.resetLayout);
   const panMode = useCanvasStore((s) => s.panMode);
@@ -42,17 +39,13 @@ export default function Toolbar({ rootFolderName, onOpenSettings }: ToolbarProps
   const isSyncing = useCanvasStore((s) => s.isSyncing);
   const isOnline = useConnectivityStore((s) => s.isOnline);
   const addStickyNote = useCanvasStore((s) => s.addStickyNote);
-  const addTextBox = useCanvasStore((s) => s.addTextBox);
-  const addShape = useCanvasStore((s) => s.addShape);
-  const { fitView, screenToFlowPosition } = useReactFlow();
+  const { fitView } = useReactFlow();
   const showBreadcrumb = usePreferencesStore((s) => s.showBreadcrumb);
 
   const query = useSearchStore((s) => s.query);
   const setQuery = useSearchStore((s) => s.setQuery);
   const search = useSearchStore((s) => s.search);
   const clearSearch = useSearchStore((s) => s.clearSearch);
-  const commentMode = useCommentStore((s) => s.commentMode);
-  const toggleCommentMode = useCommentStore((s) => s.toggleCommentMode);
   const inputRef = useRef<HTMLInputElement>(null);
   const allItems = useCanvasStore((s) => s.allItems);
   const rootFolderId = allItems[0]?.id ?? 'root';
@@ -117,10 +110,7 @@ export default function Toolbar({ rootFolderName, onOpenSettings }: ToolbarProps
             const el = document.querySelector('.react-flow__viewport');
             if (el) {
               const rect = el.getBoundingClientRect();
-              const position = screenToFlowPosition({
-                x: rect.left + rect.width / 2,
-                y: rect.top + rect.height / 2,
-              });
+              const position = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
               addStickyNote(position);
             }
           }}
@@ -129,112 +119,6 @@ export default function Toolbar({ rootFolderName, onOpenSettings }: ToolbarProps
         >
           <span className="w-3.5 h-3.5 rounded-sm shrink-0" style={{ backgroundColor: '#FEF08A', border: '1px solid #EAB308' }} />
           <span className="font-body">Nota</span>
-        </button>
-
-        {/* Text box button */}
-        <button
-          onClick={() => {
-            const el = document.querySelector('.react-flow__viewport');
-            if (el) {
-              const rect = el.getBoundingClientRect();
-              const position = screenToFlowPosition({
-                x: rect.left + rect.width / 2,
-                y: rect.top + rect.height / 2,
-              });
-              addTextBox(position);
-            }
-          }}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-md cursor-pointer border border-gray-200 motion-safe:transition-[color,background-color]"
-          title="Agregar texto"
-        >
-          <span className="font-body font-bold text-sm leading-none shrink-0">T</span>
-          <span className="font-body">Texto</span>
-        </button>
-
-        {/* Shape buttons */}
-        <button
-          onClick={() => {
-            const el = document.querySelector('.react-flow__viewport');
-            if (el) {
-              const rect = el.getBoundingClientRect();
-              const position = screenToFlowPosition({
-                x: rect.left + rect.width / 2,
-                y: rect.top + rect.height / 2,
-              });
-              addShape(position, 'rectangle');
-            }
-          }}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-md cursor-pointer border border-gray-200 motion-safe:transition-[color,background-color]"
-          title="Agregar rectángulo"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-3.5 h-3.5 shrink-0 text-gray-500">
-            <rect x="2" y="3" width="16" height="14" rx="2" />
-          </svg>
-          <span className="font-body">Rect</span>
-        </button>
-
-        <button
-          onClick={() => {
-            const el = document.querySelector('.react-flow__viewport');
-            if (el) {
-              const rect = el.getBoundingClientRect();
-              const position = screenToFlowPosition({
-                x: rect.left + rect.width / 2,
-                y: rect.top + rect.height / 2,
-              });
-              addShape(position, 'circle');
-            }
-          }}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-md cursor-pointer border border-gray-200 motion-safe:transition-[color,background-color]"
-          title="Agregar círculo"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-3.5 h-3.5 shrink-0 text-gray-500">
-            <circle cx="10" cy="10" r="8" />
-          </svg>
-          <span className="font-body">Círculo</span>
-        </button>
-
-        <button
-          onClick={() => {
-            const el = document.querySelector('.react-flow__viewport');
-            if (el) {
-              const rect = el.getBoundingClientRect();
-              const position = screenToFlowPosition({
-                x: rect.left + rect.width / 2,
-                y: rect.top + rect.height / 2,
-              });
-              addShape(position, 'arrow');
-            }
-          }}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-md cursor-pointer border border-gray-200 motion-safe:transition-[color,background-color]"
-          title="Agregar flecha"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-3.5 h-3.5 shrink-0 text-gray-500">
-            <line x1="1" y1="10" x2="15" y2="10" />
-            <polyline points="11,5 16,10 11,15" fill="none" />
-          </svg>
-          <span className="font-body">Flecha</span>
-        </button>
-
-        <button
-          onClick={() => {
-            const el = document.querySelector('.react-flow__viewport');
-            if (el) {
-              const rect = el.getBoundingClientRect();
-              const position = screenToFlowPosition({
-                x: rect.left + rect.width / 2,
-                y: rect.top + rect.height / 2,
-              });
-              addShape(position, 'line');
-            }
-          }}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-md cursor-pointer border border-gray-200 motion-safe:transition-[color,background-color]"
-          title="Agregar línea"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-3.5 h-3.5 shrink-0 text-gray-500">
-            <line x1="2" y1="10" x2="18" y2="10" />
-          </svg>
-          <span className="font-body">Línea</span>
         </button>
 
         <button
@@ -258,22 +142,6 @@ export default function Toolbar({ rootFolderName, onOpenSettings }: ToolbarProps
           aria-label={panMode ? 'Modo selección' : 'Modo mover'}
         >
           <span dangerouslySetInnerHTML={{ __html: HAND_ICON }} />
-        </button>
-
-        {/* Comment mode toggle */}
-        <button
-          onClick={toggleCommentMode}
-          className={`flex items-center justify-center w-8 h-8 rounded-md cursor-pointer motion-safe:transition-[color,background-color] active:scale-[0.97] ${
-            commentMode
-              ? 'bg-red-500 text-white hover:bg-red-600'
-              : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
-          }`}
-          title={commentMode ? 'Desactivar comentarios' : 'Modo comentario'}
-          aria-label={commentMode ? 'Desactivar comentarios' : 'Modo comentario'}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
-            <path fillRule="evenodd" d="M3.43 2.524A41.29 41.29 0 0110 2c2.236 0 4.43.18 6.57.524 1.437.231 2.43 1.49 2.43 2.902v5.148c0 1.413-.993 2.67-2.43 2.902a41.202 41.202 0 01-5.183.501.78.78 0 00-.528.224l-3.579 3.58A.75.75 0 016 17.25v-3.443a41.033 41.033 0 01-2.57-.33C2.07 13.244 1.07 11.986 1.07 10.573V5.426c0-1.413.993-2.67 2.43-2.902H3.43z" clipRule="evenodd" />
-          </svg>
         </button>
 
         {/* Sync button */}
@@ -315,7 +183,7 @@ export default function Toolbar({ rootFolderName, onOpenSettings }: ToolbarProps
         </button>
       )}
 
-      {/* Right group: search + user menu */}
+      {/* Right group: search */}
       <div className="flex items-center gap-2">
         {/* Search bar */}
         <div className="relative hidden sm:block">
@@ -337,8 +205,6 @@ export default function Toolbar({ rootFolderName, onOpenSettings }: ToolbarProps
             aria-label="Buscar archivos"
           />
         </div>
-
-        <UserMenu onOpenSettings={onOpenSettings} />
       </div>
     </div>
   );

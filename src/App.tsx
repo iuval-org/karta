@@ -145,7 +145,6 @@ function AppContent() {
         toolbar={
           <Toolbar
             rootFolderName={rootFolderName}
-            onOpenSettings={() => setSettingsOpen(true)}
           />
         }
         canvas={
