@@ -11,6 +11,7 @@ export const STICKY_NOTE_COLORS = {
   blue: '#BFDBFE',
   pink: '#F9A8D4',
   orange: '#FED7AA',
+  purple: '#E1BEE7',
 } as const;
 
 export const STICKY_NOTE_HEADER_COLORS = {
@@ -19,6 +20,7 @@ export const STICKY_NOTE_HEADER_COLORS = {
   blue: '#93C5FD',
   pink: '#F472B6',
   orange: '#FDBA74',
+  purple: '#CE93D8',
 } as const;
 
 export type StickyNoteColor = keyof typeof STICKY_NOTE_COLORS;

@@ -13,7 +13,7 @@ import { STICKY_NOTE_COLORS, STICKY_NOTE_HEADER_COLORS } from '../types/nodes';
 import { useCanvasStore } from '../stores/canvasStore';
 import { debounce } from '../utils/debounce';
 
-const COLORS: StickyNoteColor[] = ['yellow', 'green', 'blue', 'pink', 'orange'];
+const COLORS: StickyNoteColor[] = ['yellow', 'green', 'blue', 'pink', 'orange', 'purple'];
 
 const COLOR_NAMES: Record<StickyNoteColor, string> = {
   yellow: 'Amarillo',
@@ -21,6 +21,7 @@ const COLOR_NAMES: Record<StickyNoteColor, string> = {
   blue: 'Azul',
   pink: 'Rosa',
   orange: 'Naranja',
+  purple: 'Morado',
 };
 
 function formatDate(iso: string): string {
@@ -149,6 +150,9 @@ function StickyNote({ id, data, selected }: NodeProps) {
         return n;
       });
       useCanvasStore.getState().setNodes(updated as any);
+      try {
+        localStorage.setItem('karta-last-sticky-color', newColor);
+      } catch { /* localStorage no disponible */ }
       closeCtx();
     },
     [id, closeCtx],

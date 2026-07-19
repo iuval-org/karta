@@ -1573,13 +1573,19 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const id = `sticky-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const now = new Date().toISOString();
 
+    let lastColor = 'yellow';
+    try {
+      const stored = localStorage.getItem('karta-last-sticky-color');
+      if (stored) lastColor = stored;
+    } catch { /* localStorage no disponible */ }
+
     const newNode: Node<Record<string, unknown>> = {
       id,
       type: 'stickyNote',
       position,
       data: {
         text: '',
-        color: 'yellow',
+        color: lastColor,
         author: 'K',
         createdAt: now,
       },
