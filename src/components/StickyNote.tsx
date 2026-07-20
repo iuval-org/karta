@@ -24,15 +24,6 @@ const COLOR_NAMES: Record<StickyNoteColor, string> = {
   purple: 'Morado',
 };
 
-function formatDate(iso: string): string {
-  try {
-    const d = new Date(iso);
-    return d.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
-  } catch {
-    return '';
-  }
-}
-
 function StickyNote({ id, data, selected }: NodeProps) {
   const noteData = data as unknown as StickyNoteData;
   const color = (noteData.color || 'yellow') as StickyNoteColor;
@@ -218,7 +209,7 @@ function StickyNote({ id, data, selected }: NodeProps) {
       {/* Content area */}
       <div
         className="px-3 py-2 overflow-y-auto"
-        style={{ height: 'calc(100% - 26px - 28px)' }}
+        style={{ height: 'calc(100% - 26px)' }}
       >
         <div
           ref={contentRef}
@@ -256,26 +247,7 @@ function StickyNote({ id, data, selected }: NodeProps) {
         )}
       </div>
 
-      {/* Footer */}
-      <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between px-3 pb-2">
-        <span
-          className="text-[10px]"
-          style={{ color: '#6B7280', fontFamily: "'Comic Sans MS', 'Caveat', cursive" }}
-        >
-          {noteData.createdAt ? formatDate(noteData.createdAt) : ''}
-        </span>
-        <div
-          className="flex items-center justify-center rounded-full text-white text-[10px] font-semibold"
-          style={{
-            width: 20,
-            height: 20,
-            backgroundColor: '#9CA3AF',
-          }}
-          title={noteData.author || ''}
-        >
-          {(noteData.author || '?').charAt(0).toUpperCase()}
-        </div>
-      </div>
+
 
       {/* Context menu */}
       {ctxMenu && createPortal(
