@@ -21,6 +21,7 @@ import { useViewStore } from '../stores/viewStore';
 import FileNode from '../nodes/FileNode';
 import FolderNode from '../nodes/FolderNode';
 import StickyNote from './StickyNote';
+
 import LoadingSkeleton from './LoadingSkeleton';
 import EmptyState from './EmptyState';
 import ErrorState from './ErrorState';
@@ -34,6 +35,7 @@ import ViewToggle from './ViewToggle';
 import ListView from './ListView';
 import DetailsPanel from './DetailsPanel';
 import { useDetailsStore } from '../stores/detailsStore';
+
 import GridView from './GridView';
 import { createItem, CREATE_MIME_TYPES } from '../services/drive';
 import { uploadFile, isFileTooLarge, MAX_UPLOAD_SIZE } from '../services/upload';

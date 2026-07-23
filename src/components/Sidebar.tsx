@@ -536,7 +536,8 @@ export default function Sidebar({
                           'application/vnd.google-apps.presentation': '#EA580C',
                           'application/x-karta-sticky-note': '#EAB308',
                         };
-                        const accent = ACCENT[item.mimeType] ?? '#3B82F6';
+                        const accentKey = item.mimeType;
+                        const accent = ACCENT[accentKey] ?? '#3B82F6';
 
                         // Preview realista del nodo como se verá en el canvas
                         const ghost = document.createElement('div');

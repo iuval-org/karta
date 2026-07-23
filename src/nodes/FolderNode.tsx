@@ -19,6 +19,7 @@ import type { CanvasNodeData } from '../stores/canvasStore';
 import { useCanvasStore } from '../stores/canvasStore';
 import { getChildrenInFolder } from '../utils/folderBounds';
 import { useTabStore } from '../stores/tabStore';
+
 import EmptyState from '../components/EmptyState';
 import { validateFileName } from '../utils/validation';
 import { downloadFile } from '../services/download';

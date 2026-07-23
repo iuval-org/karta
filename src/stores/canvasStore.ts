@@ -721,7 +721,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const { nodes } = get();
 
     const items: DriveItem[] = nodes
-      .filter((n) => n.type !== 'stickyNote' && n.type !== 'textBox' && n.type !== 'shapeNode')
+      .filter((n) => n.type !== 'stickyNote')
       .map((n) => n.data.driveItem);
     const gridNodes = calcGridLayout(items);
 

@@ -11,6 +11,7 @@ import { Handle, Position, useStore, type NodeProps } from '@xyflow/react';
 import type { CanvasNodeData } from '../stores/canvasStore';
 import { useCanvasStore } from '../stores/canvasStore';
 import { usePreviewStore } from '../stores/previewStore';
+
 import { getFileTypeIcon } from '../types/mime';
 import { validateFileName } from '../utils/validation';
 import { downloadFile } from '../services/download';

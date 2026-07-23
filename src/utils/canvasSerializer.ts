@@ -163,7 +163,7 @@ function deserializeEdge(se: SerializedEdge): Edge {
  * Filtra nodos que pertenecen a una carpeta específica.
  * Un nodo pertenece a una carpeta si su driveItem.parentId === folderId.
  * Si folderId es 'root', incluye items sin parentId.
- * Los nodos nativos (shape, sticky, textBox) siempre pertenecen a la carpeta actual.
+ * Los nodos nativos (sticky) siempre pertenecen a la carpeta actual.
  */
 export function filterNodesByFolder(
   nodes: Node<CanvasNodeData>[],
@@ -172,12 +172,10 @@ export function filterNodesByFolder(
   return nodes.filter((n) => {
     const type = n.type;
 
-    // Nodos nativos del canvas (formas, post-its, textos, comentarios)
+    // Nodos nativos del canvas (post-its)
     // siempre se guardan en el state.json de la carpeta donde están
     if (
-      type === 'shapeNode' ||
-      type === 'stickyNote' ||
-      type === 'textBox'
+      type === 'stickyNote'
     ) {
       return true;
     }
