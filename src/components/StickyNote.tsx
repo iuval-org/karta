@@ -14,7 +14,7 @@ import { useCanvasStore } from '../stores/canvasStore';
 
 import { debounce } from '../utils/debounce';
 
-const COLORS: StickyNoteColor[] = ['yellow', 'green', 'blue', 'pink', 'orange'];
+const COLORS: StickyNoteColor[] = ['yellow', 'green', 'blue', 'pink', 'orange', 'purple'];
 
 const COLOR_NAMES: Record<StickyNoteColor, string> = {
   yellow: 'Amarillo',
@@ -22,6 +22,7 @@ const COLOR_NAMES: Record<StickyNoteColor, string> = {
   blue: 'Azul',
   pink: 'Rosa',
   orange: 'Naranja',
+  purple: 'Morado',
 };
 
 function formatDate(iso: string): string {
