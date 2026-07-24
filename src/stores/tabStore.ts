@@ -25,6 +25,9 @@ interface TabState {
 
   getActiveTab: () => Tab | undefined;
   getTabById: (tabId: string) => Tab | undefined;
+
+  /** Update the root tab title (called when root folder is selected). */
+  updateRootTabTitle: (title: string) => void;
 }
 
 let nextIdCounter = Date.now();
@@ -203,6 +206,17 @@ export const useTabStore = create<TabState>((set, get) => ({
 
   getTabById: (tabId: string) => {
     return get().tabs.find((t) => t.tabId === tabId);
+  },
+
+  /* ── Update root tab title (called when root folder is selected) ── */
+
+  updateRootTabTitle: (title: string) => {
+    const { tabs, persistTabs } = get();
+    const updated = tabs.map((t) =>
+      t.tabId === 'root' ? { ...t, title } : t,
+    );
+    set({ tabs: updated });
+    persistTabs();
   },
 }));
 

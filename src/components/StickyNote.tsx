@@ -151,6 +151,10 @@ function StickyNote({ id, data, selected }: NodeProps) {
         return n;
       });
       useCanvasStore.getState().setNodes(updated as any);
+      // Save last color so next sticky note uses it
+      try {
+        localStorage.setItem('karta-last-sticky-color', newColor as string);
+      } catch { /* localStorage no disponible */ }
       closeCtx();
     },
     [id, closeCtx],

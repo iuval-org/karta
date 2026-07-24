@@ -352,7 +352,8 @@ const debouncedPersist = debounce(
     const user = useAuthStore.getState().user;
     if (user) {
       const folderId = useCanvasStore.getState().currentFolderId || 'root';
-      const folderNodes = filterNodesByFolder(nodes, folderId);
+      const rootFolderId = useRootStore.getState().rootFolderId;
+      const folderNodes = filterNodesByFolder(nodes, folderId, rootFolderId);
       const state = serializeCanvas(folderNodes, []);
       writeCanvasState(folderId, state).catch((err) => {
         console.warn('[PERSIST] Drive sync error (non-fatal):', err);
@@ -604,7 +605,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const user = useAuthStore.getState().user;
     if (user) {
       const folderId = get().currentFolderId || 'root';
-      const folderNodes = filterNodesByFolder(nodes, folderId);
+      const rootFolderId = useRootStore.getState().rootFolderId;
+      const folderNodes = filterNodesByFolder(nodes, folderId, rootFolderId);
       const state = serializeCanvas(folderNodes, edges);
       writeCanvasState(folderId, state).catch((err) => {
         console.warn('[persistNow] Drive sync error (non-fatal):', err);
@@ -1344,7 +1346,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
       const updatedNodes = filteredNodes.map((node) => {
         const fresh = freshMap.get(node.id);
-        if (fresh && fresh.name !== node.data.driveItem.name) {
+        if (fresh && node.data.driveItem && fresh.name !== node.data.driveItem.name) {
           return {
             ...node,
             data: {
@@ -1428,7 +1430,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const renamedMap = new Map(result.renamed.map((r) => [r.fileId, r.newName]));
       const renamedNodes = filteredNodes.map((node) => {
         const newName = renamedMap.get(node.id);
-        if (newName && newName !== node.data.driveItem.name) {
+        if (newName && node.data.driveItem && newName !== node.data.driveItem.name) {
           return {
             ...node,
             data: {

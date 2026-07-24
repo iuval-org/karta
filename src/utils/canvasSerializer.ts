@@ -162,12 +162,14 @@ function deserializeEdge(se: SerializedEdge): Edge {
 /**
  * Filtra nodos que pertenecen a una carpeta específica.
  * Un nodo pertenece a una carpeta si su driveItem.parentId === folderId.
- * Si folderId es 'root', incluye items sin parentId.
+ * Si folderId es 'root', incluye items sin parentId que pertenezcan al root
+ * folder seleccionado por el usuario (rootFolderId).
  * Los nodos nativos (sticky) siempre pertenecen a la carpeta actual.
  */
 export function filterNodesByFolder(
   nodes: Node<CanvasNodeData>[],
   folderId: string,
+  rootFolderId?: string | null,
 ): Node<CanvasNodeData>[] {
   return nodes.filter((n) => {
     const type = n.type;
@@ -185,7 +187,11 @@ export function filterNodesByFolder(
     if (!item) return true; // si no tiene driveItem, se guarda igual
 
     if (folderId === 'root') {
-      return !item.parentId || item.parentId === 'root';
+      // Root level: include items with no parentId, parentId === 'root',
+      // or parentId === rootFolderId (user's selected root folder)
+      if (!item.parentId || item.parentId === 'root') return true;
+      if (rootFolderId && item.parentId === rootFolderId) return true;
+      return false;
     }
     return item.parentId === folderId;
   });

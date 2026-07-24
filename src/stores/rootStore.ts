@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { db } from '../services/db';
+import { useTabStore } from './tabStore';
 
 interface RootState {
   rootFolderId: string | null;
@@ -23,6 +24,8 @@ export const useRootStore = create<RootState>((set, get) => ({
       { key: 'rootFolderId', value: id },
       { key: 'rootFolderName', value: name },
     ]);
+    // Update the root tab title to reflect the selected folder name
+    useTabStore.getState().updateRootTabTitle(name);
   },
 
   changeRoot: () => {
