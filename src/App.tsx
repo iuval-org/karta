@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ReactFlowProvider } from '@xyflow/react';
 import { useAuthStore } from './stores/authStore';
 import { useRootStore } from './stores/rootStore';
@@ -25,11 +25,10 @@ import SettingsModal from './components/SettingsModal';
 
 function AppContent() {
   const { user, isLoading: authLoading } = useAuthStore();
-  const { rootFolderId, rootFolderName, isLoading: rootLoading, hydrate, changeRoot } =
+  const { rootFolderId, rootFolderName, isLoading: rootLoading, hydrate } =
     useRootStore();
   const loadItems = useCanvasStore((s) => s.loadItems);
   const initialized = useCanvasStore((s) => s.nodes.length > 0);
-  const resetLayout = useCanvasStore((s) => s.resetLayout);
   const loadTabs = useTabStore((s) => s.loadTabs);
   const tabsHydrated = useTabStore((s) => s.hydrated);
   const hydrateSidebar = useSidebarStore((s) => s.hydrate);
@@ -100,19 +99,6 @@ function AppContent() {
     }
   }, [navCurrentFolderId, navCurrentFolderName, navHistory, rootFolderId]);
 
-  const handleNewTab = useCallback(() => {
-    const addTab = useTabStore.getState().addTab;
-    const tabs = useTabStore.getState().tabs;
-    if (tabs.length > 0) {
-      // Open Google Picker — re-use root folder for simplicity
-      addTab(rootFolderId ?? 'root', rootFolderName || 'Nueva pestaña');
-    }
-  }, [rootFolderId, rootFolderName]);
-
-  const handleReorganize = useCallback(() => {
-    resetLayout();
-  }, [resetLayout]);
-
   if (authLoading || (user && rootLoading)) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -133,15 +119,7 @@ function AppContent() {
     <>
       <AppLayout
         tabBar={<TabBar />}
-        sidebar={
-          <Sidebar
-            rootFolderName={rootFolderName}
-            onNewTab={handleNewTab}
-            onReorganize={handleReorganize}
-            onChangeRoot={changeRoot}
-            onOpenSettings={() => setSettingsOpen(true)}
-          />
-        }
+        sidebar={<Sidebar />}
         toolbar={
           <Toolbar
             rootFolderName={rootFolderName}

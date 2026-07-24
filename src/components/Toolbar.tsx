@@ -1,10 +1,13 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useReactFlow } from '@xyflow/react';
 import { useCanvasStore } from '../stores/canvasStore';
 import { useSidebarStore } from '../stores/sidebarStore';
 import { useSearchStore } from '../stores/searchStore';
+import type { SearchResult } from '../stores/searchStore';
 import { usePreferencesStore } from '../stores/preferencesStore';
 import { useConnectivityStore } from '../stores/connectivityStore';
+import { debounce } from '../utils/debounce';
+import { getFileTypeIcon } from '../types/mime';
 
 import UserMenu from './UserMenu';
 
@@ -23,6 +26,10 @@ const HAND_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" f
 const SYNC_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="16" height="16"><path fillRule="evenodd" d="M15.312 11.424a5.5 5.5 0 01-9.201 2.466l-.312-.311h2.433a.75.75 0 000-1.5H3.989a.75.75 0 00-.75.75v4.242a.75.75 0 001.5 0v-2.43l.31.31a7 7 0 0011.712-3.138.75.75 0 00-1.449-.39zm1.23-3.723a.75.75 0 00.219-.53V2.929a.75.75 0 00-1.5 0V5.36l-.31-.31A7 7 0 003.239 8.188a.75.75 0 101.448.389A5.5 5.5 0 0113.89 6.11l.311.31h-2.432a.75.75 0 000 1.5h4.243a.75.75 0 00.53-.219z" clipRule="evenodd"/></svg>`;
 
 const SEARCH_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="16" height="16"><path fillRule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z" clipRule="evenodd"/></svg>`;
+
+const FOLDER_OPEN_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="16" height="16"><path d="M4.75 3A1.75 1.75 0 003 4.75v2.752l.104-.002h13.792c.035 0 .07 0 .104.002V6.75A1.75 1.75 0 0015.25 5h-3.836a.25.25 0 01-.177-.073L9.823 3.513A1.75 1.75 0 008.586 3H4.75zM3.104 9a1.75 1.75 0 00-1.673 2.265l1.385 4.5A1.75 1.75 0 004.488 17h11.023a1.75 1.75 0 001.673-1.235l1.384-4.5A1.75 1.75 0 0016.896 9H3.104z"/></svg>`;
+
+const DOCUMENT_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="16" height="16"><path d="M3 3.5A1.5 1.5 0 014.5 2h6.879a1.5 1.5 0 011.06.44l4.122 4.12A1.5 1.5 0 0117 7.622V16.5a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 013 16.5v-13z"/></svg>`;
 
 /* ------------------------------------------------------------------ */
 /*  Component                                                          */
@@ -46,6 +53,8 @@ export default function Toolbar({ rootFolderName, onOpenSettings }: ToolbarProps
   const showBreadcrumb = usePreferencesStore((s) => s.showBreadcrumb);
 
   const query = useSearchStore((s) => s.query);
+  const results = useSearchStore((s) => s.results);
+  const isSearching = useSearchStore((s) => s.isSearching);
   const setQuery = useSearchStore((s) => s.setQuery);
   const search = useSearchStore((s) => s.search);
   const clearSearch = useSearchStore((s) => s.clearSearch);
@@ -53,20 +62,50 @@ export default function Toolbar({ rootFolderName, onOpenSettings }: ToolbarProps
   const allItems = useCanvasStore((s) => s.allItems);
   const rootFolderId = allItems[0]?.id ?? 'root';
 
+  const [showResults, setShowResults] = useState(false);
+
+  const hasActiveSearch = query.trim().length > 0;
+
+  /* ── debounced local search ──────────────────────────────── */
+  const debouncedSearchRef = useRef(
+    debounce((q: string) => {
+      if (q.trim()) {
+        useSearchStore.getState().search(q, rootFolderId);
+      }
+    }, 300),
+  );
+
   /* ── multi-selection counter ───────────────────────────────── */
   const selectedNodeIds = useCanvasStore((s) => s.selectedNodeIds);
   const clearSelection = useCanvasStore((s) => s.clearSelection);
   const selectionCount = selectedNodeIds.length;
   const showSelectionBadge = selectionCount > 1;
 
+  const handleInputChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const q = e.target.value;
+      setQuery(q);
+      setShowResults(true);
+      if (q.trim()) {
+        debouncedSearchRef.current(q);
+      } else {
+        clearSearch();
+        setShowResults(false);
+      }
+    },
+    [setQuery, clearSearch],
+  );
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
       if (e.key === 'Enter') {
         if (query.trim()) {
           search(query.trim(), rootFolderId);
+          setShowResults(true);
         }
       } else if (e.key === 'Escape') {
         clearSearch();
+        setShowResults(false);
         inputRef.current?.blur();
       }
     },
@@ -78,6 +117,42 @@ export default function Toolbar({ rootFolderName, onOpenSettings }: ToolbarProps
     const rootId = useCanvasStore.getState().currentFolderId || useCanvasStore.getState().allItems[0]?.id || 'root';
     syncFolder(rootId).catch(() => {});
   }, [isSyncing, isOnline, syncFolder]);
+
+  /* ── render MIME icon helper ─────────────────────────────── */
+  const mimeIconHtml = useCallback(
+    (result: SearchResult) => {
+      const cat = getFileTypeIcon(result.mimeType);
+      const map: Record<string, string> = {
+        folder: FOLDER_OPEN_ICON,
+        document: DOCUMENT_ICON,
+        sheet: DOCUMENT_ICON,
+        pdf: DOCUMENT_ICON,
+        image: DOCUMENT_ICON,
+      };
+      return map[cat] ?? DOCUMENT_ICON;
+    },
+    [],
+  );
+
+  /* ── highlight match in name ─────────────────────────────── */
+  const highlightedName = useCallback(
+    (result: SearchResult) => {
+      const { name, matchStart, matchEnd } = result;
+      if (matchStart === undefined || matchEnd === undefined) {
+        return <span>{name}</span>;
+      }
+      return (
+        <>
+          <span>{name.slice(0, matchStart)}</span>
+          <span className="bg-blue-100 text-blue-800 rounded px-0.5 font-medium">
+            {name.slice(matchStart, matchEnd)}
+          </span>
+          <span>{name.slice(matchEnd)}</span>
+        </>
+      );
+    },
+    [],
+  );
 
   return (
     <div className="flex items-center justify-between px-3 py-1.5 bg-white border-b border-gray-200">
@@ -192,7 +267,7 @@ export default function Toolbar({ rootFolderName, onOpenSettings }: ToolbarProps
       {/* Right group: search + user menu */}
       <div className="flex items-center gap-2">
         {/* Search bar */}
-        <div className="relative hidden sm:block">
+        <div className="relative">
           <span
             className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
             dangerouslySetInnerHTML={{ __html: SEARCH_ICON }}
@@ -202,14 +277,79 @@ export default function Toolbar({ rootFolderName, onOpenSettings }: ToolbarProps
             type="text"
             placeholder="Buscar archivos..."
             value={query}
-            onChange={(e) => {
-              const q = e.target.value;
-              setQuery(q);
-            }}
+            onChange={handleInputChange}
             onKeyDown={handleKeyDown}
-            className="w-48 pl-8 pr-3 py-1.5 text-xs font-body text-gray-700 bg-gray-50 border border-gray-200 rounded-md placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 motion-safe:transition-shadow"
+            onFocus={() => { if (hasActiveSearch) setShowResults(true); }}
+            onBlur={() => setTimeout(() => setShowResults(false), 200)}
+            className="w-48 pl-8 pr-8 py-1.5 text-xs font-body text-gray-700 bg-gray-50 border border-gray-200 rounded-md placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 motion-safe:transition-shadow"
             aria-label="Buscar archivos"
           />
+          {query && (
+            <button
+              onClick={() => { clearSearch(); setShowResults(false); }}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 active:scale-[0.97]"
+              aria-label="Limpiar búsqueda"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="14" height="14">
+                <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+              </svg>
+            </button>
+          )}
+
+          {/* Search results dropdown */}
+          {showResults && hasActiveSearch && (
+            <div
+              className="absolute top-full right-0 mt-1 z-30 w-80 bg-white rounded-lg border border-gray-200 py-1 max-h-80 overflow-y-auto"
+              style={{ boxShadow: '0 1px 3px 0 rgb(0 0 0 / 0.06), 0 1px 2px -1px rgb(0 0 0 / 0.06)' }}
+            >
+              {isSearching ? (
+                <div className="flex items-center justify-center py-6">
+                  <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                </div>
+              ) : results.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-6 text-center px-4">
+                  <div
+                    className="text-gray-300 mb-2"
+                    dangerouslySetInnerHTML={{ __html: SEARCH_ICON }}
+                  />
+                  <p className="text-xs text-gray-500">No se encontraron archivos</p>
+                </div>
+              ) : (
+                <>
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1 px-3 pt-1">
+                    Resultados ({results.length})
+                  </p>
+                  <div className="space-y-0.5 px-1">
+                    {results.map((result) => (
+                      <div
+                        key={result.id}
+                        className="flex items-center gap-2 w-full px-2 py-1.5 text-xs text-gray-700 hover:bg-gray-100 rounded-md motion-safe:transition-colors"
+                      >
+                        <span
+                          className="shrink-0 text-gray-400"
+                          dangerouslySetInnerHTML={{ __html: mimeIconHtml(result) }}
+                        />
+                        <span className="truncate flex-1">
+                          {highlightedName(result)}
+                        </span>
+                        {!result.inCanvas && (
+                          <button
+                            onClick={() => {
+                              console.log('Agregar al canvas:', result.name);
+                            }}
+                            className="shrink-0 text-[10px] text-blue-600 hover:text-blue-800 hover:underline active:scale-[0.97]"
+                            title="Agregar al canvas"
+                          >
+                            + Canvas
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
 
         <UserMenu onOpenSettings={onOpenSettings} />

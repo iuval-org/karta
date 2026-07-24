@@ -129,14 +129,21 @@ export const useTabStore = create<TabState>((set, get) => ({
     const { hydrated } = get();
     if (hydrated) return;
 
+    // Ensure rootStore is hydrated so we have the folder name
+    const rootState = useRootStore.getState();
+    if (!rootState.hydrated) {
+      await rootState.hydrate();
+    }
+
     try {
       const storedTabs: StoredTab[] = await db.tabs.toArray();
 
       if (storedTabs.length === 0) {
-        // Create a default root tab
+        // Create a default root tab with the selected root folder name
+        const rootName = useRootStore.getState().rootFolderName || 'Karta';
         const rootTab: Tab = {
           tabId: 'root',
-          title: 'Karta',
+          title: rootName,
           folderId: 'root',
           order: 0,
         };
@@ -166,8 +173,9 @@ export const useTabStore = create<TabState>((set, get) => ({
       useCanvasStore.getState().setActiveTabId(get().activeTabId);
     } catch {
       // Fallback: create root tab
+      const rootName = useRootStore.getState().rootFolderName || 'Karta';
       set({
-        tabs: [{ tabId: 'root', title: 'Karta', folderId: 'root', order: 0 }],
+        tabs: [{ tabId: 'root', title: rootName, folderId: 'root', order: 0 }],
         activeTabId: 'root',
         hydrated: true,
       });
