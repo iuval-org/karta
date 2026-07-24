@@ -14,9 +14,8 @@ import {
   MarkerType,
 } from '@xyflow/react';
 import type { DriveItem } from '../types/drive';
-import { listChildren, listAllChildren, getUseMock, createItem } from '../services/drive';
+import { listChildren, listAllChildren, createItem } from '../services/drive';
 import { operationQueue } from '../services/operationQueue';
-import { MOCK_ITEMS } from '../data/mockDriveItems';
 import { calcGridLayout } from '../utils/layout';
 import { debounce } from '../utils/debounce';
 import { db } from '../services/db';
@@ -397,28 +396,22 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     set({ isLoading: true, error: null, errorType: null, searchHighlightedNodeIds: [] });
 
     try {
+      // At root view, load ALL items recursively so all saved positions
+      // match existing nodes. When navigating inside a folder, only load
+      // that folder's direct children.
+      const rootFolderId = useRootStore.getState().rootFolderId;
+      const loadingRoot = !folderId || folderId === 'root' || folderId === rootFolderId;
       let items: DriveItem[];
-
-      if (getUseMock()) {
-        items = MOCK_ITEMS;
+      if (loadingRoot) {
+        items = await listAllChildren(folderId || 'root');
       } else {
-        // At root view, load ALL items recursively so all saved positions
-        // match existing nodes. When navigating inside a folder, only load
-        // that folder's direct children.
-        const rootFolderId = useRootStore.getState().rootFolderId;
-        const loadingRoot = !folderId || folderId === 'root' || folderId === rootFolderId;
-        if (loadingRoot) {
-          items = await listAllChildren(folderId || 'root');
-        } else {
-          items = await listChildren(folderId);
-        }
+        items = await listChildren(folderId);
       }
 
       // Filter root-level items based on folder context.
-      const rootFolderId = useRootStore.getState().rootFolderId;
-      const isRootView = !folderId || folderId === 'root' || folderId === rootFolderId || getUseMock();
+      const isRootView = loadingRoot;
       const rootItems = isRootView
-        ? (getUseMock() ? items.filter((i) => !i.parentId) : items)
+        ? items
         : items.filter((i) => i.parentId === folderId);
 
       const gridNodes = calcGridLayout(rootItems);
@@ -1311,9 +1304,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const { currentFolderId, allItems, nodes } = get();
 
     try {
-      const freshItems = getUseMock()
-        ? MOCK_ITEMS
-        : await listChildren(currentFolderId || 'root');
+      const freshItems = await listChildren(currentFolderId || 'root');
 
       const currentIds = new Set(allItems.map((i) => i.id));
       const freshIds = new Set(freshItems.map((i) => i.id));
@@ -1390,9 +1381,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   syncFolder: async (folderId: string) => {
     const state = get();
     if (state.isSyncing) return;
-
-    // Only sync for real Drive (not mock)
-    if (getUseMock()) return;
 
     set({ isSyncing: true });
 

@@ -1,6 +1,5 @@
 import type { DriveItem } from '../types/drive';
 import { useAuthStore } from '../stores/authStore';
-import { getUseMock } from './drive';
 
 export const MAX_UPLOAD_SIZE = 100 * 1024 * 1024;
 
@@ -26,10 +25,6 @@ export async function uploadFile(
   folderId: string,
   onProgress?: (progress: number) => void,
 ): Promise<DriveItem | null> {
-  if (getUseMock()) {
-    return uploadFileMock(file, folderId);
-  }
-
   const accessToken = await useAuthStore.getState().getAccessToken();
   if (!accessToken) {
     throw new Error('No hay sesión activa.');
@@ -96,18 +91,4 @@ export async function uploadFile(
   });
 
   return response;
-}
-
-function uploadFileMock(file: File, _folderId: string): DriveItem {
-  const id = `mock-upload-${Date.now()}`;
-  return {
-    id,
-    name: file.name,
-    mimeType: file.type || 'application/octet-stream',
-    webViewLink: 'https://drive.google.com',
-    modifiedTime: new Date().toISOString(),
-    iconLink: '',
-    size: String(file.size),
-    isFolder: false,
-  };
 }

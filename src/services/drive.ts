@@ -13,22 +13,6 @@
 
 import type { DriveItem } from '../types/drive';
 import { useAuthStore } from '../stores/authStore';
-import { MOCK_ITEMS } from '../data/mockDriveItems';
-
-// ---------------------------------------------------------------------------
-// Mock mode
-// ---------------------------------------------------------------------------
-
-/**
- /**
-  * Determina dinámicamente si se deben usar datos mock en vez de llamar a la API real.
-  * Evalúa el estado actual de auth (token en memoria o sessionStorage) en cada llamada.
-  * NO es una constante — el token puede cambiar después del login o después de recargar la página.
-  * Útil para desarrollo offline o sin autenticación.
-  */
- export function getUseMock(): boolean {
-   return !useAuthStore.getState().oAuthAccessToken;
- }
 
 // ---------------------------------------------------------------------------
 // Cache
@@ -419,10 +403,6 @@ export async function createItem(
   mimeType: string,
   parentFolderId: string,
 ): Promise<DriveItem> {
-  if (getUseMock()) {
-    return createItemMock(name, mimeType, parentFolderId);
-  }
-
   await ensureApiReady();
 
   const body: Record<string, unknown> = {
@@ -434,9 +414,6 @@ export async function createItem(
   if (parentFolderId && parentFolderId !== 'root') {
     body.parents = [parentFolderId];
   }
-
-  const hasToken = !!((window as any).gapi?.auth?.getToken?.());
-  console.log('[CREATE] createItem called:', { name, mimeType, parentFolderId, mockMode: getUseMock(), hasToken });
 
   const response = await withRetry(async () => {
     const client = window.gapi.client;
@@ -458,35 +435,6 @@ export async function createItem(
   console.log('[CREATE] mapped item:', item);
   setCache(item.id, item);
   return item;
-}
-
-/** Mock implementation: simulates successful creation by adding to MOCK_ITEMS. */
-function createItemMock(
-  name: string,
-  mimeType: string,
-  parentFolderId: string,
-): DriveItem {
-  const id = `mock-${Date.now()}`;
-  const now = new Date().toISOString();
-  const isFolder = mimeType === 'application/vnd.google-apps.folder';
-
-  const newItem: DriveItem = {
-    id,
-    name,
-    mimeType,
-    webViewLink: 'https://drive.google.com',
-    modifiedTime: now,
-    iconLink: '',
-    isFolder,
-  };
-
-  // Root level in mock means no parentId; otherwise, set parentId
-  if (parentFolderId && parentFolderId !== 'root') {
-    newItem.parentId = parentFolderId;
-  }
-
-  MOCK_ITEMS.push(newItem);
-  return newItem;
 }
 
 /**
@@ -560,10 +508,6 @@ export async function moveItem(
   newParentId: string,
   oldParentId: string,
 ): Promise<void> {
-  if (getUseMock()) {
-    return moveItemMock(fileId, newParentId);
-  }
-
   await ensureApiReady();
 
   await withRetry(async () => {
@@ -608,15 +552,6 @@ export async function moveItem(
   });
 }
 
-/** Mock implementation: just updates parentId in MOCK_ITEMS. */
-function moveItemMock(fileId: string, newParentId: string): void {
-  const item = MOCK_ITEMS.find((i) => i.id === fileId);
-  if (!item) {
-    throw new Error('Archivo no encontrado.');
-  }
-  item.parentId = newParentId;
-}
-
 // ---------------------------------------------------------------------------
 // Trash item (mover a papelera)
 // ---------------------------------------------------------------------------
@@ -628,10 +563,6 @@ function moveItemMock(fileId: string, newParentId: string): void {
  * - En mock mode, remueve el item de MOCK_ITEMS
  */
 export async function trashItem(fileId: string): Promise<void> {
-  if (getUseMock()) {
-    return trashItemMock(fileId);
-  }
-
   await ensureApiReady();
 
   await withRetry(async () => {
@@ -669,15 +600,6 @@ export async function trashItem(fileId: string): Promise<void> {
       throw err;
     }
   });
-}
-
-/** Mock implementation: removes from MOCK_ITEMS. */
-function trashItemMock(fileId: string): void {
-  const idx = MOCK_ITEMS.findIndex((i) => i.id === fileId);
-  if (idx === -1) {
-    throw new Error('Archivo no encontrado.');
-  }
-  MOCK_ITEMS.splice(idx, 1);
 }
 
 /**
@@ -724,10 +646,6 @@ export async function renameItem(
   fileId: string,
   newName: string,
 ): Promise<void> {
-  if (getUseMock()) {
-    return renameItemMock(fileId, newName);
-  }
-
   await ensureApiReady();
 
   await withRetry(async () => {
@@ -764,15 +682,6 @@ export async function renameItem(
       throw err;
     }
   });
-}
-
-/** Mock implementation: updates the name in MOCK_ITEMS. */
-function renameItemMock(fileId: string, newName: string): void {
-  const item = MOCK_ITEMS.find((i) => i.id === fileId);
-  if (!item) {
-    throw new Error('Archivo no encontrado.');
-  }
-  item.name = newName;
 }
 
 /**

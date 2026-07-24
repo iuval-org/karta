@@ -10,7 +10,7 @@
  */
 
 import type { DriveItem } from '../types/drive';
-import { getStartPageToken, getChanges, getUseMock } from './drive';
+import { getStartPageToken, getChanges } from './drive';
 import { db, type SyncState } from './db';
 import type { NodePosition } from './db';
 
@@ -23,17 +23,6 @@ import type { NodePosition } from './db';
  * Si no existe, obtiene uno nuevo de Drive API y lo guarda.
  */
 export async function getOrCreatePageToken(): Promise<string> {
-  // En mock mode, no hay API real de Changes — devolvemos un token ficticio
-  if (getUseMock()) {
-    const saved = await db.syncState.get('sync');
-    if (saved?.pageToken) {
-      return saved.pageToken;
-    }
-    const token = `mock-token-${Date.now()}`;
-    await savePageToken(token);
-    return token;
-  }
-
   // Intentar obtener token guardado
   const saved = await db.syncState.get('sync');
   if (saved?.pageToken) {
@@ -87,11 +76,6 @@ export async function syncFolder(
     moved: [],
     changeCount: 0,
   };
-
-  // En mock mode, no hay API real de Changes — simulamos sin cambios
-  if (getUseMock()) {
-    return result;
-  }
 
   const pageToken = await getOrCreatePageToken();
 
@@ -209,8 +193,6 @@ function mapChangeToDriveItem(file: GapiDriveFile): DriveItem {
  * Útil para mostrar indicador visual de "cambios sin sincronizar".
  */
 export async function hasPendingChanges(): Promise<boolean> {
-  if (getUseMock()) return false;
-
   try {
     const saved = await db.syncState.get('sync');
     if (!saved?.pageToken) return false;

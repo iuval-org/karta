@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { searchFiles, getUseMock } from '../services/drive';
+import { searchFiles } from '../services/drive';
 import { useCanvasStore } from './canvasStore';
 import type { DriveItem } from '../types/drive';
 
@@ -109,19 +109,10 @@ export const useSearchStore = create<SearchState>((set, get) => ({
     try {
       let driveItems: DriveItem[];
 
-      if (getUseMock()) {
-        // Simulate drive search from allItems (items not in canvas)
-        const allItems = canvasStore.allItems;
-        const canvasIds = new Set(canvasStore.nodes.map((n) => n.id));
-        driveItems = allItems.filter(
-          (item) => !canvasIds.has(item.id) && item.name.toLowerCase().includes(lower),
-        );
-      } else {
-        driveItems = await searchFiles(query);
-        // Filter out items already in canvas
-        const canvasIds = new Set(canvasStore.nodes.map((n) => n.id));
-        driveItems = driveItems.filter((item) => !canvasIds.has(item.id));
-      }
+      driveItems = await searchFiles(query);
+      // Filter out items already in canvas
+      const canvasIds = new Set(canvasStore.nodes.map((n) => n.id));
+      driveItems = driveItems.filter((item) => !canvasIds.has(item.id));
 
       const driveResults: SearchResult[] = driveItems.map((item) => {
         const offsets = findMatchOffsets(item.name, query);

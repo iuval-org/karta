@@ -1,13 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { useCanvasStore } from './canvasStore';
-import { MOCK_ITEMS } from '../data/mockDriveItems';
 import type { DriveItem } from '../types/drive';
 
 // ---------------------------------------------------------------------------
 // Mock dependencies
 // ---------------------------------------------------------------------------
 
-// Mock authStore (needed by getUseMock in drive.ts)
+// Mock authStore
 vi.mock('../stores/authStore', () => ({
   useAuthStore: {
     getState: vi.fn(() => ({
@@ -25,11 +24,9 @@ vi.mock('../services/firebase', () => ({
 
 // Mock drive module
 const mockListChildren = vi.hoisted(() => vi.fn());
-const mockGetUseMock = vi.hoisted(() => vi.fn(() => true));
 vi.mock('../services/drive', () => ({
   listChildren: (folderId: string) => mockListChildren(folderId),
   listAllChildren: (folderId: string) => mockListChildren(folderId),
-  getUseMock: (...args: any[]) => mockGetUseMock(...args),
   moveItem: vi.fn(),
   renameItem: vi.fn(),
   createItem: vi.fn(),
@@ -112,17 +109,51 @@ vi.mock('./toastStore', () => ({
   },
 }));
 
+// Mock rootStore
+const mockRootFolderId = vi.hoisted(() => vi.fn(() => 'root-folder-id'));
+vi.mock('./rootStore', () => ({
+  useRootStore: {
+    getState: vi.fn(() => ({
+      rootFolderId: mockRootFolderId(),
+    })),
+  },
+}));
+
 // ---------------------------------------------------------------------------
-// Helpers
+// Sample data used in tests
 // ---------------------------------------------------------------------------
 
-/** Count root-level items in MOCK_ITEMS (no parentId) */
-const ROOT_ITEM_COUNT = MOCK_ITEMS.filter((i) => !i.parentId).length;
+const ROOT_FOLDER_ID = 'root-folder-id';
 
-/** Count child items of a given folder */
-function childCount(folderId: string): number {
-  return MOCK_ITEMS.filter((i) => i.parentId === folderId).length;
-}
+const MOCK_ROOT_ITEMS: DriveItem[] = [
+  {
+    id: 'f1', name: 'Guion', mimeType: 'application/vnd.google-apps.folder',
+    webViewLink: '#', modifiedTime: '', isFolder: true, parentId: ROOT_FOLDER_ID,
+  },
+  {
+    id: 'f2', name: 'Referencias Visuales', mimeType: 'application/vnd.google-apps.folder',
+    webViewLink: '#', modifiedTime: '', isFolder: true, parentId: ROOT_FOLDER_ID,
+  },
+  {
+    id: 'f3', name: 'Assets', mimeType: 'application/vnd.google-apps.folder',
+    webViewLink: '#', modifiedTime: '', isFolder: true, parentId: ROOT_FOLDER_ID,
+  },
+  {
+    id: 'file1', name: 'Texto Final.pdf', mimeType: 'application/pdf',
+    webViewLink: '#', modifiedTime: '', isFolder: false, parentId: ROOT_FOLDER_ID,
+  },
+];
+
+const MOCK_CHILD_ITEMS: DriveItem[] = [
+  {
+    id: 'child1', name: 'Escena 1', mimeType: 'text/plain',
+    webViewLink: '#', modifiedTime: '', isFolder: false, parentId: 'f1',
+  },
+  {
+    id: 'child2', name: 'Escena 2', mimeType: 'text/plain',
+    webViewLink: '#', modifiedTime: '', isFolder: false, parentId: 'f1',
+  },
+];
 
 beforeEach(() => {
   // Reset store state
@@ -142,75 +173,33 @@ beforeEach(() => {
   });
 
   vi.clearAllMocks();
-  // Default: mock mode ON
-  mockGetUseMock.mockReturnValue(true);
 });
 
 describe('Canvas store — loadItems()', () => {
-  it('carga items desde MOCK_ITEMS cuando getUseMock()', async () => {
+  it('carga items desde Drive API para folder root', async () => {
+    mockListChildren.mockResolvedValue(MOCK_ROOT_ITEMS);
+
     await useCanvasStore.getState().loadItems('root');
 
     const state = useCanvasStore.getState();
     expect(state.isLoading).toBe(false);
-    expect(state.allItems).toEqual(MOCK_ITEMS);
-    expect(state.nodes.length).toBe(ROOT_ITEM_COUNT);
+    expect(state.allItems).toEqual(MOCK_ROOT_ITEMS);
+    expect(state.nodes.length).toBe(MOCK_ROOT_ITEMS.length);
   });
 
-  it('filtra root items por !parentId en vista root', async () => {
-    await useCanvasStore.getState().loadItems('root');
-
-    const state = useCanvasStore.getState();
-    for (const node of state.nodes) {
-      const item = MOCK_ITEMS.find((i) => i.id === node.id);
-      expect(item?.parentId).toBeUndefined();
-    }
-  });
-
-  it('cuando mock mode, trata cualquier folderId como root view', async () => {
-    // In mock mode, isRootView is always true because mock parentIds
-    // won't match real Drive folder IDs. So loadItems('f1') returns ROOT items.
-    await useCanvasStore.getState().loadItems('f1');
-
-    const state = useCanvasStore.getState();
-    // Because getUseMock() == true, isRootView is forced to true
-    expect(state.nodes.length).toBe(ROOT_ITEM_COUNT);
-  });
-
-  it('cuando NO mock mode en vista root, no filtra por !parentId (Drive API da parents[0]=root)', async () => {
-    mockGetUseMock.mockReturnValue(false);
-    // Simulate real Drive API: root-level items have parents: ['root']
-    // so listChildren returns them with parentId='root' (NOT undefined)
-    const rootItems = MOCK_ITEMS.filter((i) => !i.parentId)
-      .map((i) => ({ ...i, parentId: 'root' as string }));
-    mockListChildren.mockResolvedValue(rootItems);
-
-    await useCanvasStore.getState().loadItems('root');
-
-    const state = useCanvasStore.getState();
-    // All root items should appear — fix keeps ALL items since API already scoped
-    expect(state.nodes.length).toBe(ROOT_ITEM_COUNT);
-    // Verify parentId was correctly received
-    expect(state.allItems.every((i) => i.parentId === 'root')).toBe(true);
-  });
-
-  it('cuando NO mock mode, filtra items por parentId === folderId en subcarpetas', async () => {
-    mockGetUseMock.mockReturnValue(false);
-    // Simulate listChildren returning only children of f1
-    const f1Children = MOCK_ITEMS.filter((i) => i.parentId === 'f1');
-    mockListChildren.mockResolvedValue(f1Children);
+  it('filtra root items cuando se pasa folderId específico', async () => {
+    mockListChildren.mockResolvedValue(MOCK_CHILD_ITEMS);
 
     await useCanvasStore.getState().loadItems('f1');
 
     const state = useCanvasStore.getState();
-    expect(state.nodes.length).toBe(childCount('f1'));
+    expect(state.nodes.length).toBe(MOCK_CHILD_ITEMS.length);
     for (const node of state.nodes) {
-      const item = MOCK_ITEMS.find((i) => i.id === node.id);
-      expect(item?.parentId).toBe('f1');
+      expect(node.data.driveItem.parentId).toBe('f1');
     }
   });
 
   it('maneja error de API gracefulmente', async () => {
-    mockGetUseMock.mockReturnValue(false);
     mockListChildren.mockRejectedValue(new Error('Network error'));
 
     await useCanvasStore.getState().loadItems('root');
@@ -222,6 +211,7 @@ describe('Canvas store — loadItems()', () => {
   });
 
   it('no se rompe si hydrateFromDexie falla', async () => {
+    mockListChildren.mockResolvedValue(MOCK_ROOT_ITEMS);
     // Mock DB query to throw
     mockWhere.mockImplementation(() => { throw new Error('DB error'); });
 
@@ -230,15 +220,17 @@ describe('Canvas store — loadItems()', () => {
     const state = useCanvasStore.getState();
     expect(state.isLoading).toBe(false);
     // Should still have loaded the items even if hydration failed
-    expect(state.nodes.length).toBe(ROOT_ITEM_COUNT);
+    expect(state.nodes.length).toBe(MOCK_ROOT_ITEMS.length);
   });
 
   it('crea nodes con tipo correcto (folderNode/fileNode)', async () => {
+    mockListChildren.mockResolvedValue(MOCK_ROOT_ITEMS);
+
     await useCanvasStore.getState().loadItems('root');
 
     const state = useCanvasStore.getState();
     for (const node of state.nodes) {
-      const item = MOCK_ITEMS.find((i) => i.id === node.id);
+      const item = MOCK_ROOT_ITEMS.find((i) => i.id === node.id);
       if (item?.isFolder) {
         expect(node.type).toBe('folderNode');
       } else {
@@ -250,6 +242,7 @@ describe('Canvas store — loadItems()', () => {
 
 describe('Canvas store — addNewItem', () => {
   beforeEach(async () => {
+    mockListChildren.mockResolvedValue(MOCK_ROOT_ITEMS);
     await useCanvasStore.getState().loadItems('root');
   });
 
@@ -275,6 +268,7 @@ describe('Canvas store — addNewItem', () => {
 
 describe('Canvas store — toggleFolder', () => {
   it('abre una carpeta que existe en los nodos cargados', async () => {
+    mockListChildren.mockResolvedValue(MOCK_ROOT_ITEMS);
     await useCanvasStore.getState().loadItems('root');
 
     // 'f1' (Guion) is a root-level folder, so it exists as a node
@@ -289,9 +283,10 @@ describe('Canvas store — toggleFolder', () => {
   });
 
   it('togglea incluso sin children (expandedFolders solo trackea qué está expandido)', async () => {
+    mockListChildren.mockResolvedValue(MOCK_ROOT_ITEMS);
     await useCanvasStore.getState().loadItems('root');
 
-    // Folder 'f2' (Referencias Visuales) has no children in MOCK_ITEMS
+    // Folder 'f2' (Referencias Visuales)
     useCanvasStore.getState().toggleFolder('f2');
 
     // Now it always toggles — no child check

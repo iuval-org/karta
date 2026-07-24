@@ -33,23 +33,6 @@ function getClient() {
   return (window as unknown as { gapi: { client: { request: (req: { path: string; method?: string; params?: Record<string, string>; body?: unknown }) => Promise<{ result: unknown }> } } }).gapi.client;
 }
 
-/**
- * Determina si debemos usar mock (modo desarrollo offline).
- */
-function getUseMock(): boolean {
-  return !useAuthStore.getState().oAuthAccessToken;
-}
-
-// ---------------------------------------------------------------------------
-// Mock helpers para desarrollo offline
-// ---------------------------------------------------------------------------
-
-interface MockStorage {
-  [folderPath: string]: KartaState | null;
-}
-
-const mockStore: MockStorage = {};
-
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -63,14 +46,6 @@ const mockStore: MockStorage = {};
 export async function findOrCreateDotKarta(
   parentFolderId: string,
 ): Promise<string> {
-  if (getUseMock()) {
-    const mockKey = `dotkarta:${parentFolderId}`;
-    if (!mockStore[mockKey]) {
-      mockStore[mockKey] = null; // exists but empty
-    }
-    return mockKey;
-  }
-
   const client = getClient();
 
   // 1. Buscar si ya existe ._karta
@@ -116,9 +91,9 @@ export async function findOrCreateDotKarta(
 export async function readCanvasState(
   folderId: string,
 ): Promise<KartaState | null> {
-  if (getUseMock()) {
-    const mockKey = `state:${folderId}`;
-    return mockStore[mockKey] ?? null;
+  // Without a Drive token, there's no saved state to read
+  if (!useAuthStore.getState().oAuthAccessToken) {
+    return null;
   }
 
   const client = getClient();
@@ -174,9 +149,8 @@ export async function writeCanvasState(
   folderId: string,
   state: KartaState,
 ): Promise<void> {
-  if (getUseMock()) {
-    const mockKey = `state:${folderId}`;
-    mockStore[mockKey] = state;
+  // Without a Drive token, skip persistence silently (non-fatal)
+  if (!useAuthStore.getState().oAuthAccessToken) {
     return;
   }
 
@@ -227,9 +201,8 @@ export async function writeCanvasState(
  * Elimina el state.json de una carpeta (al vaciar papelera, etc.).
  */
 export async function deleteCanvasState(folderId: string): Promise<void> {
-  if (getUseMock()) {
-    const mockKey = `state:${folderId}`;
-    delete mockStore[mockKey];
+  // Without a Drive token, skip deletion silently
+  if (!useAuthStore.getState().oAuthAccessToken) {
     return;
   }
 
