@@ -111,7 +111,7 @@ export function useKeyboardShortcuts() {
           return;
         }
 
-        case 'Control+r': {
+        case 'Control+Shift+r': {
           e.preventDefault();
           useCanvasStore.getState().resetLayout();
           return;

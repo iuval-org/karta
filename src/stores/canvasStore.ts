@@ -287,7 +287,7 @@ export function persistenceScope(activeTabId: string, currentFolderId: string): 
 
 /* ── debounced persistence ───────────────────────────────────── */
 
-const debouncedPersist = debounce(
+export const debouncedPersist = debounce(
   async (
     nodes: Node<CanvasNodeData>[],
     edges: Edge[],
@@ -1737,6 +1737,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   setNodes: (nodes: Node<CanvasNodeData>[]) => {
     set({ nodes });
+    const state = get();
+    debouncedPersist(
+      state.nodes,
+      state.edges,
+      state.expandedFolders,
+      persistenceScope(state.activeTabId, state.currentFolderId),
+    );
   },
 
   /* ── Group in folder (creates folder, moves items into it) ────── */

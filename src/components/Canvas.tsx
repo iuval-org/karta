@@ -14,7 +14,7 @@ import {
   type Edge,
   ConnectionLineType,
 } from '@xyflow/react';
-import { useCanvasStore } from '../stores/canvasStore';
+import { useCanvasStore, debouncedPersist } from '../stores/canvasStore';
 import { useShortcutStore } from '../stores/shortcutStore';
 import { usePreferencesStore } from '../stores/preferencesStore';
 import { useViewStore } from '../stores/viewStore';
@@ -72,7 +72,6 @@ function Flow() {
   const storeOnNodeDragStart = useCanvasStore((s) => s.onNodeDragStart);
   const storeOnNodeDrag = useCanvasStore((s) => s.onNodeDrag);
   const storeOnNodeDragStop = useCanvasStore((s) => s.onNodeDragStop);
-  const persistNow = useCanvasStore((s) => s.persistNow);
   const isUploading = useCanvasStore((s) => s.isUploading);
   const uploadProgress = useCanvasStore((s) => s.uploadProgress);
   const setUploadProgress = useCanvasStore((s) => s.setUploadProgress);
@@ -87,11 +86,11 @@ function Flow() {
   /* ── Flush pending saves before tab close ──────────────────── */
   useEffect(() => {
     const onBeforeUnload = () => {
-      persistNow(); // Best-effort: save to Dexie before the tab closes
+      debouncedPersist.flush(); // Synchronously flush any pending debounced save
     };
     window.addEventListener('beforeunload', onBeforeUnload);
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
-  }, [persistNow]);
+  }, []);
 
   /* ── File drag & drop state ──────────────────────────────────── */
   const [isFileDragOver, setIsFileDragOver] = useState(false);
