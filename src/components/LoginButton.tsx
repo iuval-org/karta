@@ -3,9 +3,18 @@ import { useAuthStore } from '../stores/authStore';
 export default function LoginButton() {
   const loginWithGoogle = useAuthStore((s) => s.loginWithGoogle);
 
+  const handleLogin = async () => {
+    await loginWithGoogle();
+    const redirect = localStorage.getItem('karta_redirect_after_login');
+    if (redirect) {
+      localStorage.removeItem('karta_redirect_after_login');
+      window.location.href = redirect;
+    }
+  };
+
   return (
     <button
-      onClick={loginWithGoogle}
+      onClick={handleLogin}
       className="flex items-center justify-center gap-3 w-full max-w-xs px-6 py-3 bg-white border-2 border-gray-200 rounded-xl text-gray-700 font-medium text-sm hover:shadow-md hover:border-gray-300 transition-all duration-200 active:scale-[0.97] cursor-pointer"
     >
       <GoogleIcon />

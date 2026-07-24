@@ -12,6 +12,9 @@ export function useGooglePicker(
   onFolderSelected: (folderId: string, folderName: string) => void,
 ): UseGooglePickerReturn {
   const getAccessToken = useAuthStore((s) => s.getAccessToken);
+  const refreshAccessToken = useAuthStore((s) => s.refreshAccessToken);
+  const clearAccessToken = useAuthStore((s) => s.clearAccessToken);
+  const logout = useAuthStore((s) => s.logout);
   const [error, setError] = useState<string | null>(null);
   const [isReady, setIsReady] = useState(isPickerReady());
   const loadingRef = useRef(false);
@@ -22,9 +25,21 @@ export function useGooglePicker(
     setError(null);
 
     try {
-      const token = await getAccessToken();
+      let token = await getAccessToken();
+
+      // If no token, try silent refresh first
       if (!token) {
-        setError('No hay sesión activa. Iniciá sesión de nuevo.');
+        token = await refreshAccessToken();
+      }
+
+      // If still no token, redirect to login
+      if (!token) {
+        localStorage.setItem(
+          'karta_redirect_after_login',
+          window.location.href,
+        );
+        clearAccessToken();
+        await logout();
         return;
       }
 
@@ -53,7 +68,7 @@ export function useGooglePicker(
     } finally {
       loadingRef.current = false;
     }
-  }, [getAccessToken, onFolderSelected]);
+  }, [getAccessToken, refreshAccessToken, clearAccessToken, logout, onFolderSelected]);
 
   return { showPicker, isReady, error };
 }
