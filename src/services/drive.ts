@@ -392,7 +392,6 @@ export const CREATE_MIME_TYPES = {
 
 /**
  * Crea un nuevo item en Google Drive (carpeta, documento, planilla o presentación).
- * En mock mode, simula la creación agregando a MOCK_ITEMS.
  *
  * - POST /drive/v3/files
  * - Body: { name, mimeType, parents: [parentFolderId] }
@@ -500,8 +499,6 @@ export async function getFolderPath(
 /**
  * Mueve un archivo (o carpeta) de una carpeta padre a otra en Google Drive
  * usando addParents / removeParents.
- *
- * En mock mode (USE_MOCK), simula el movimiento actualizando MOCK_ITEMS.
  */
 export async function moveItem(
   fileId: string,
@@ -560,7 +557,6 @@ export async function moveItem(
  * Mueve un archivo o carpeta a la papelera de Google Drive.
  * - PATCH /drive/v3/files/{fileId} con body: { trashed: true }
  * - Maneja 403 (permiso denegado), 404 (no encontrado), 429 (rate limit)
- * - En mock mode, remueve el item de MOCK_ITEMS
  */
 export async function trashItem(fileId: string): Promise<void> {
   await ensureApiReady();
@@ -640,7 +636,6 @@ export async function trashItems(
  * - Body: { name: newName }
  * - Fields: id, name
  * - Maneja 403, 404, 400 (nombre inválido)
- * - En mock mode, actualiza el nombre en MOCK_ITEMS
  */
 export async function renameItem(
   fileId: string,
