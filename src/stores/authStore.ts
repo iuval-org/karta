@@ -129,9 +129,14 @@ interface AuthState {
 }
 
 export const useAuthStore = create<AuthState>((set, get) => {
-  onAuthStateChanged(auth, (user) => {
-    set({ user, isLoading: false });
-  });
+  // In E2E mode, skip Firebase Auth observer — the bridge injects state directly
+  if (typeof window !== 'undefined' && (window as any).__KARTA_E2E__) {
+    // Don't register onAuthStateChanged; state is injected by e2e-bridge.ts
+  } else {
+    onAuthStateChanged(auth, (user) => {
+      set({ user, isLoading: false });
+    });
+  }
 
   return {
     user: null,
