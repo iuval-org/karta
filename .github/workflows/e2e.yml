@@ -62,7 +62,6 @@ jobs:
         run: |
           if [ -f playwright-report/index.html ]; then
             echo "## 📊 Playwright E2E Test Results" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            npx playwright show-report playwright-report --host 0.0.0.0 --port 0 2>/dev/null || true
-            echo "Report uploaded as artifact: playwright-report" >> $GITHUB_STEP_SUMMARY
+            REPORT_URL="\${{ github.server_url }}/\${{ github.repository }}/actions/runs/\${{ github.run_id }}"
+            echo "[View full report in artifacts →](\$REPORT_URL)" >> $GITHUB_STEP_SUMMARY
           fi
